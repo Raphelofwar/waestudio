@@ -46,6 +46,24 @@ type BcvStatus =
   | "success"
   | "error";
 
+type BookingApiResponse = {
+  ok: boolean;
+  bookingId?: string;
+  bookingCode?: string;
+  status?: string;
+  code?: string;
+  message?: string;
+};
+
+function triggerTapFeedback() {
+  if (
+    typeof navigator !== "undefined" &&
+    typeof navigator.vibrate === "function"
+  ) {
+    navigator.vibrate(12);
+  }
+}
+
 const services: Service[] = [
   {
     id: "essential",
@@ -132,8 +150,9 @@ function ScreenHeader({
       <button
         type="button"
         onClick={onBack}
+        onPointerDown={triggerTapFeedback}
         aria-label="Volver"
-        className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 text-lg text-white/60 transition active:scale-95"
+        className="flex h-11 w-11 touch-manipulation select-none items-center justify-center rounded-full border border-white/10 text-lg text-white/60 transition-all duration-100 ease-out active:translate-y-px active:scale-90 active:border-[#c5a66d]/70 active:bg-[#c5a66d]/10 active:text-[#c5a66d]"
       >
         ←
       </button>
@@ -208,6 +227,21 @@ export default function Home() {
 
   const [bcvStatus, setBcvStatus] =
     useState<BcvStatus>("loading");
+
+  const [
+    paymentSubmitting,
+    setPaymentSubmitting,
+  ] = useState(false);
+
+  const [
+    paymentError,
+    setPaymentError,
+  ] = useState<string | null>(null);
+
+  const [
+    bookingCode,
+    setBookingCode,
+  ] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadRate() {
@@ -414,6 +448,46 @@ export default function Home() {
     return `${day}/${month}/${year}`;
   }
 
+  function formatApiDate(
+    date: Date
+  ) {
+    const year = date.getFullYear();
+    const month = String(
+      date.getMonth() + 1
+    ).padStart(2, "0");
+    const day = String(
+      date.getDate()
+    ).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+  }
+
+  function formatApiTime(
+    time: string
+  ) {
+    const match = time.match(
+      /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i
+    );
+
+    if (!match) {
+      return time;
+    }
+
+    let hour = Number(match[1]);
+    const minute = match[2];
+    const period = match[3].toUpperCase();
+
+    if (period === "AM" && hour === 12) {
+      hour = 0;
+    }
+
+    if (period === "PM" && hour !== 12) {
+      hour += 12;
+    }
+
+    return `${String(hour).padStart(2, "0")}:${minute}`;
+  }
+
   function isPastDay(
     day: number
   ) {
@@ -520,6 +594,7 @@ export default function Home() {
     setBank("");
     setReference("");
     setReceipt(null);
+    setPaymentError(null);
 
     setStep(
       "paymentDetails"
@@ -541,12 +616,103 @@ export default function Home() {
     setReceipt(file);
   }
 
-  function reportPayment() {
-    if (!validPayment) {
+  async function reportPayment() {
+    if (
+      !validPayment ||
+      paymentSubmitting ||
+      !selectedDate ||
+      !selectedTime ||
+      !selectedService ||
+      !paymentMethod ||
+      bcvRate === null ||
+      !receipt
+    ) {
       return;
     }
 
-    setStep("success");
+    try {
+      setPaymentSubmitting(true);
+      setPaymentError(null);
+
+      const formData = new FormData();
+
+      formData.append(
+        "customerName",
+        name.trim()
+      );
+      formData.append(
+        "customerWhatsapp",
+        whatsapp.trim()
+      );
+      formData.append(
+        "serviceCode",
+        selectedService.id
+      );
+      formData.append(
+        "date",
+        formatApiDate(selectedDate)
+      );
+      formData.append(
+        "time",
+        formatApiTime(selectedTime)
+      );
+      formData.append(
+        "paymentMethod",
+        paymentMethod
+      );
+      formData.append(
+        "payerBank",
+        bank.trim()
+      );
+      formData.append(
+        "reference",
+        reference.trim()
+      );
+      formData.append(
+        "bcvRate",
+        String(bcvRate)
+      );
+      formData.append(
+        "receipt",
+        receipt
+      );
+
+      const response = await fetch(
+        "/api/bookings",
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      const data: BookingApiResponse =
+        await response.json();
+
+      if (!response.ok || !data.ok) {
+        throw new Error(
+          data.message ||
+            "No fue posible registrar la reserva."
+        );
+      }
+
+      setBookingCode(
+        data.bookingCode || null
+      );
+      setStep("success");
+    } catch (error) {
+      console.error(
+        "Error reporting payment:",
+        error
+      );
+
+      setPaymentError(
+        error instanceof Error
+          ? error.message
+          : "No fue posible registrar la reserva."
+      );
+    } finally {
+      setPaymentSubmitting(false);
+    }
   }
 
   function startNewBooking() {
@@ -561,6 +727,9 @@ export default function Home() {
     setBank("");
     setReference("");
     setReceipt(null);
+    setPaymentError(null);
+    setPaymentSubmitting(false);
+    setBookingCode(null);
 
     setCurrentMonth(
       new Date(
@@ -653,6 +822,7 @@ export default function Home() {
                     src="/waestudio-logo.png"
                     alt="WAESTUDIO"
                     fill
+                    sizes="80px"
                     priority
                     className="object-contain"
                   />
@@ -705,7 +875,8 @@ export default function Home() {
                     "calendar"
                   )
                 }
-                className="mt-8 min-h-14 w-full rounded-full bg-[#f5f1e8] px-6 text-sm font-semibold text-[#090909] transition active:scale-[0.98]"
+                onPointerDown={triggerTapFeedback}
+                className="mt-8 min-h-14 w-full touch-manipulation select-none rounded-full bg-[#f5f1e8] px-6 text-sm font-semibold text-[#090909] transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.96] active:bg-[#ddd7cb] active:shadow-[inset_0_3px_10px_rgba(0,0,0,0.28)]"
               >
                 Reservar cita
               </button>
@@ -742,7 +913,8 @@ export default function Home() {
                             time
                           )
                         }
-                        className="min-h-12 rounded-xl border border-white/10 bg-white/[0.02] text-[13px] text-white/70 transition active:scale-95 active:bg-white/10"
+                        onPointerDown={triggerTapFeedback}
+                        className="min-h-12 touch-manipulation select-none rounded-xl border border-white/10 bg-white/[0.02] text-[13px] text-white/70 transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.94] active:border-[#c5a66d]/70 active:bg-[#c5a66d]/15 active:text-[#f5f1e8] active:shadow-[inset_0_2px_8px_rgba(0,0,0,0.35)]"
                       >
                         {time}
                       </button>
@@ -797,7 +969,8 @@ export default function Home() {
                   onClick={() =>
                     changeMonth(-1)
                   }
-                  className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 text-white/50 active:scale-95"
+                  onPointerDown={triggerTapFeedback}
+                  className="flex h-11 w-11 touch-manipulation select-none items-center justify-center rounded-full border border-white/10 text-white/50 transition-all duration-100 ease-out active:translate-y-px active:scale-90 active:border-[#c5a66d]/70 active:bg-[#c5a66d]/10 active:text-[#c5a66d]"
                 >
                   ←
                 </button>
@@ -821,7 +994,8 @@ export default function Home() {
                   onClick={() =>
                     changeMonth(1)
                   }
-                  className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 text-white/50 active:scale-95"
+                  onPointerDown={triggerTapFeedback}
+                  className="flex h-11 w-11 touch-manipulation select-none items-center justify-center rounded-full border border-white/10 text-white/50 transition-all duration-100 ease-out active:translate-y-px active:scale-90 active:border-[#c5a66d]/70 active:bg-[#c5a66d]/10 active:text-[#c5a66d]"
                 >
                   →
                 </button>
@@ -875,10 +1049,11 @@ export default function Home() {
                             day
                           )
                         }
-                        className={`aspect-square rounded-full text-xs transition ${
+                        onPointerDown={triggerTapFeedback}
+                        className={`aspect-square touch-manipulation select-none rounded-full text-xs transition-all duration-100 ease-out ${
                           disabled
                             ? "text-white/15"
-                            : "border border-white/10 bg-white/[0.025] text-white/70 active:scale-90 active:border-[#c5a66d]"
+                            : "border border-white/10 bg-white/[0.025] text-white/70 active:translate-y-[2px] active:scale-[0.86] active:border-[#c5a66d] active:bg-[#c5a66d]/20 active:text-[#f5f1e8] active:shadow-[inset_0_2px_8px_rgba(0,0,0,0.35)]"
                         }`}
                       >
                         {day}
@@ -936,7 +1111,8 @@ export default function Home() {
                           time
                         )
                       }
-                      className="min-h-14 rounded-2xl border border-white/10 bg-white/[0.035] text-sm text-white/70 transition active:scale-95 active:border-[#c5a66d] active:bg-[#c5a66d]/10"
+                      onPointerDown={triggerTapFeedback}
+                      className="min-h-14 touch-manipulation select-none rounded-2xl border border-white/10 bg-white/[0.035] text-sm text-white/70 transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.94] active:border-[#c5a66d] active:bg-[#c5a66d]/20 active:text-[#f5f1e8] active:shadow-[inset_0_2px_9px_rgba(0,0,0,0.38)]"
                     >
                       {time}
                     </button>
@@ -1005,7 +1181,8 @@ export default function Home() {
                             service
                           )
                         }
-                        className="w-full rounded-[28px] border border-white/10 bg-white/[0.035] p-6 text-left transition active:scale-[0.99] active:border-[#c5a66d]/60"
+                        onPointerDown={triggerTapFeedback}
+                        className="w-full touch-manipulation select-none rounded-[28px] border border-white/10 bg-white/[0.035] p-6 text-left transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.97] active:border-[#c5a66d]/70 active:bg-[#c5a66d]/10 active:shadow-[inset_0_3px_12px_rgba(0,0,0,0.32)]"
                       >
                         <div className="flex items-start justify-between gap-6">
                           <div>
@@ -1233,9 +1410,10 @@ export default function Home() {
                       "paymentMethod"
                     )
                   }
-                  className={`min-h-14 w-full rounded-full px-6 text-sm font-semibold transition ${
+                  onPointerDown={triggerTapFeedback}
+                  className={`min-h-14 w-full touch-manipulation select-none rounded-full px-6 text-sm font-semibold transition-all duration-100 ease-out ${
                     validDetails
-                      ? "bg-[#f5f1e8] text-[#090909] active:scale-[0.98]"
+                      ? "bg-[#f5f1e8] text-[#090909] active:translate-y-[2px] active:scale-[0.96] active:bg-[#ddd7cb] active:shadow-[inset_0_3px_10px_rgba(0,0,0,0.28)]"
                       : "cursor-not-allowed bg-white/10 text-white/25"
                   }`}
                 >
@@ -1352,7 +1530,8 @@ export default function Home() {
                     onClick={
                       retryBcvRate
                     }
-                    className="mt-5 min-h-11 w-full rounded-xl border border-white/10 text-xs text-white/60"
+                    onPointerDown={triggerTapFeedback}
+                    className="mt-5 min-h-11 w-full touch-manipulation select-none rounded-xl border border-white/10 text-xs text-white/60 transition-all duration-100 ease-out active:translate-y-px active:scale-[0.97] active:border-[#c5a66d]/60 active:bg-[#c5a66d]/10"
                   >
                     Reintentar tasa BCV
                   </button>
@@ -1367,7 +1546,8 @@ export default function Home() {
                       "mobile"
                     )
                   }
-                  className="flex min-h-24 w-full items-center justify-between rounded-[24px] border border-white/10 bg-white/[0.035] p-5 text-left transition active:scale-[0.99] active:border-[#c5a66d]/60"
+                  onPointerDown={triggerTapFeedback}
+                  className="flex min-h-24 w-full touch-manipulation select-none items-center justify-between rounded-[24px] border border-white/10 bg-white/[0.035] p-5 text-left transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.96] active:border-[#c5a66d]/70 active:bg-[#c5a66d]/[0.12] active:shadow-[inset_0_3px_12px_rgba(0,0,0,0.34)]"
                 >
                   <div>
                     <p className="text-base font-medium">
@@ -1391,7 +1571,8 @@ export default function Home() {
                       "transfer"
                     )
                   }
-                  className="flex min-h-24 w-full items-center justify-between rounded-[24px] border border-white/10 bg-white/[0.035] p-5 text-left transition active:scale-[0.99] active:border-[#c5a66d]/60"
+                  onPointerDown={triggerTapFeedback}
+                  className="flex min-h-24 w-full touch-manipulation select-none items-center justify-between rounded-[24px] border border-white/10 bg-white/[0.035] p-5 text-left transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.96] active:border-[#c5a66d]/70 active:bg-[#c5a66d]/[0.12] active:shadow-[inset_0_3px_12px_rgba(0,0,0,0.34)]"
                 >
                   <div>
                     <p className="text-base font-medium">
@@ -1495,7 +1676,8 @@ export default function Home() {
                     onClick={
                       retryBcvRate
                     }
-                    className="mt-5 min-h-11 w-full rounded-xl border border-white/10 text-xs text-white/60"
+                    onPointerDown={triggerTapFeedback}
+                    className="mt-5 min-h-11 w-full touch-manipulation select-none rounded-xl border border-white/10 text-xs text-white/60 transition-all duration-100 ease-out active:translate-y-px active:scale-[0.97] active:border-[#c5a66d]/60 active:bg-[#c5a66d]/10"
                   >
                     Reintentar tasa BCV
                   </button>
@@ -1632,7 +1814,8 @@ export default function Home() {
 
                   <label
                     htmlFor="receipt"
-                    className={`flex min-h-28 w-full cursor-pointer flex-col items-center justify-center rounded-[22px] border border-dashed px-5 text-center transition ${
+                    onPointerDown={triggerTapFeedback}
+                    className={`flex min-h-28 w-full touch-manipulation select-none cursor-pointer flex-col items-center justify-center rounded-[22px] border border-dashed px-5 text-center transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.98] ${
                       receipt
                         ? "border-[#c5a66d]/60 bg-[#c5a66d]/[0.06]"
                         : "border-white/15 bg-white/[0.025]"
@@ -1687,19 +1870,30 @@ export default function Home() {
                 <button
                   type="button"
                   disabled={
-                    !validPayment
+                    !validPayment ||
+                    paymentSubmitting
                   }
                   onClick={
                     reportPayment
                   }
-                  className={`min-h-14 w-full rounded-full px-6 text-sm font-semibold transition ${
-                    validPayment
-                      ? "bg-[#f5f1e8] text-[#090909] active:scale-[0.98]"
+                  onPointerDown={triggerTapFeedback}
+                  className={`min-h-14 w-full touch-manipulation select-none rounded-full px-6 text-sm font-semibold transition-all duration-100 ease-out ${
+                    validPayment &&
+                    !paymentSubmitting
+                      ? "bg-[#f5f1e8] text-[#090909] active:translate-y-[2px] active:scale-[0.96] active:bg-[#ddd7cb] active:shadow-[inset_0_3px_10px_rgba(0,0,0,0.28)]"
                       : "cursor-not-allowed bg-white/10 text-white/25"
                   }`}
                 >
-                  Reportar pago
+                  {paymentSubmitting
+                    ? "Registrando reserva..."
+                    : "Reportar pago"}
                 </button>
+
+                {paymentError && (
+                  <p className="mt-3 rounded-xl border border-red-400/20 bg-red-400/[0.06] px-4 py-3 text-center text-[11px] leading-5 text-red-200/80">
+                    {paymentError}
+                  </p>
+                )}
 
                 {bcvRate ===
                   null && (
@@ -1737,6 +1931,17 @@ export default function Home() {
                 <p className="mt-5 text-sm leading-6 text-white/40">
                   WAESTUDIO revisará el comprobante antes de confirmar definitivamente tu cita.
                 </p>
+
+                {bookingCode && (
+                  <div className="mt-6 rounded-2xl border border-[#c5a66d]/30 bg-[#c5a66d]/[0.06] px-4 py-4">
+                    <p className="text-[9px] uppercase tracking-[0.28em] text-[#c5a66d]">
+                      Código de reserva
+                    </p>
+                    <p className="mt-2 text-xl font-semibold tracking-[0.08em] text-[#f5f1e8]">
+                      {bookingCode}
+                    </p>
+                  </div>
+                )}
 
                 <div className="mt-9 rounded-[28px] border border-white/10 bg-white/[0.035] p-5">
                   <div className="space-y-4 text-sm">
@@ -1829,7 +2034,8 @@ export default function Home() {
                 onClick={
                   startNewBooking
                 }
-                className="min-h-14 w-full rounded-full bg-[#f5f1e8] px-6 text-sm font-semibold text-[#090909] active:scale-[0.98]"
+                onPointerDown={triggerTapFeedback}
+                className="min-h-14 w-full touch-manipulation select-none rounded-full bg-[#f5f1e8] px-6 text-sm font-semibold text-[#090909] transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.96] active:bg-[#ddd7cb] active:shadow-[inset_0_3px_10px_rgba(0,0,0,0.28)]"
               >
                 Volver al inicio
               </button>
