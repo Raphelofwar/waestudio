@@ -1,0 +1,1841 @@
+"use client";
+
+import Image from "next/image";
+import {
+  ChangeEvent,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
+type Step =
+  | "home"
+  | "calendar"
+  | "time"
+  | "service"
+  | "details"
+  | "paymentMethod"
+  | "paymentDetails"
+  | "success";
+
+type PaymentMethod =
+  | "mobile"
+  | "transfer"
+  | null;
+
+type Service = {
+  id: string;
+  name: string;
+  price: number;
+  duration: string;
+  description: string;
+  includes: string[];
+};
+
+type BcvApiResponse = {
+  ok: boolean;
+  rate: number | null;
+  date: string | null;
+  updatedAt: string | null;
+  source: string;
+  message?: string;
+};
+
+type BcvStatus =
+  | "loading"
+  | "success"
+  | "error";
+
+const services: Service[] = [
+  {
+    id: "essential",
+    name: "Corte Esencial",
+    price: 7,
+    duration: "45 min",
+    description:
+      "Corte de cabello con acabado profesional.",
+    includes: [
+      "Corte de cabello",
+      "Acabado y styling",
+    ],
+  },
+  {
+    id: "premium",
+    name: "Experiencia Premium",
+    price: 10,
+    duration: "75 min",
+    description:
+      "Una experiencia completa de cuidado masculino.",
+    includes: [
+      "Corte de cabello",
+      "Perfilado de barba",
+      "Lavado",
+      "Mascarilla facial",
+    ],
+  },
+];
+
+const availableHours = [
+  "9:00 AM",
+  "9:45 AM",
+  "10:30 AM",
+  "11:15 AM",
+  "2:00 PM",
+  "2:45 PM",
+  "3:30 PM",
+  "4:15 PM",
+  "5:00 PM",
+];
+
+const todayQuickHours = [
+  "10:00 AM",
+  "11:30 AM",
+  "2:00 PM",
+  "3:30 PM",
+  "5:00 PM",
+];
+
+const months = [
+  "Enero",
+  "Febrero",
+  "Marzo",
+  "Abril",
+  "Mayo",
+  "Junio",
+  "Julio",
+  "Agosto",
+  "Septiembre",
+  "Octubre",
+  "Noviembre",
+  "Diciembre",
+];
+
+const weekDays = [
+  "D",
+  "L",
+  "M",
+  "M",
+  "J",
+  "V",
+  "S",
+];
+
+function ScreenHeader({
+  title,
+  onBack,
+}: {
+  title: string;
+  onBack: () => void;
+}) {
+  return (
+    <header className="flex items-center justify-between">
+      <button
+        type="button"
+        onClick={onBack}
+        aria-label="Volver"
+        className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 text-lg text-white/60 transition active:scale-95"
+      >
+        ←
+      </button>
+
+      <p className="text-[10px] uppercase tracking-[0.3em] text-white/30">
+        {title}
+      </p>
+
+      <div className="h-11 w-11" />
+    </header>
+  );
+}
+
+export default function Home() {
+  const today = useMemo(
+    () => new Date(),
+    []
+  );
+
+  const [step, setStep] =
+    useState<Step>("home");
+
+  const [currentMonth, setCurrentMonth] =
+    useState(
+      new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        1
+      )
+    );
+
+  const [
+    selectedDate,
+    setSelectedDate,
+  ] = useState<Date | null>(null);
+
+  const [
+    selectedTime,
+    setSelectedTime,
+  ] = useState<string | null>(null);
+
+  const [
+    selectedService,
+    setSelectedService,
+  ] = useState<Service | null>(null);
+
+  const [name, setName] =
+    useState("");
+
+  const [whatsapp, setWhatsapp] =
+    useState("");
+
+  const [
+    paymentMethod,
+    setPaymentMethod,
+  ] = useState<PaymentMethod>(null);
+
+  const [bank, setBank] =
+    useState("");
+
+  const [reference, setReference] =
+    useState("");
+
+  const [receipt, setReceipt] =
+    useState<File | null>(null);
+
+  const [bcvRate, setBcvRate] =
+    useState<number | null>(null);
+
+  const [bcvDate, setBcvDate] =
+    useState<string | null>(null);
+
+  const [bcvStatus, setBcvStatus] =
+    useState<BcvStatus>("loading");
+
+  useEffect(() => {
+    async function loadRate() {
+      try {
+        setBcvStatus("loading");
+
+        const response = await fetch(
+          "/api/bcv",
+          {
+            cache: "no-store",
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            "BCV API unavailable"
+          );
+        }
+
+        const data: BcvApiResponse =
+          await response.json();
+
+        if (
+          !data.ok ||
+          typeof data.rate !== "number"
+        ) {
+          throw new Error(
+            "Invalid BCV response"
+          );
+        }
+
+        setBcvRate(data.rate);
+        setBcvDate(data.date);
+        setBcvStatus("success");
+      } catch (error) {
+        console.error(
+          "Error loading BCV:",
+          error
+        );
+
+        setBcvRate(null);
+        setBcvDate(null);
+        setBcvStatus("error");
+      }
+    }
+
+    loadRate();
+  }, []);
+
+  async function retryBcvRate() {
+    try {
+      setBcvStatus("loading");
+
+      const response = await fetch(
+        `/api/bcv?t=${Date.now()}`,
+        {
+          cache: "no-store",
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          "BCV API unavailable"
+        );
+      }
+
+      const data: BcvApiResponse =
+        await response.json();
+
+      if (
+        !data.ok ||
+        typeof data.rate !== "number"
+      ) {
+        throw new Error(
+          "Invalid BCV response"
+        );
+      }
+
+      setBcvRate(data.rate);
+      setBcvDate(data.date);
+      setBcvStatus("success");
+    } catch (error) {
+      console.error(
+        "Error retrying BCV:",
+        error
+      );
+
+      setBcvRate(null);
+      setBcvDate(null);
+      setBcvStatus("error");
+    }
+  }
+
+  const calendarDays =
+    useMemo(() => {
+      const year =
+        currentMonth.getFullYear();
+
+      const month =
+        currentMonth.getMonth();
+
+      const firstDay =
+        new Date(
+          year,
+          month,
+          1
+        ).getDay();
+
+      const totalDays =
+        new Date(
+          year,
+          month + 1,
+          0
+        ).getDate();
+
+      const days:
+        Array<number | null> = [];
+
+      for (
+        let i = 0;
+        i < firstDay;
+        i++
+      ) {
+        days.push(null);
+      }
+
+      for (
+        let day = 1;
+        day <= totalDays;
+        day++
+      ) {
+        days.push(day);
+      }
+
+      return days;
+    }, [currentMonth]);
+
+  const phoneDigits =
+    whatsapp.replace(/\D/g, "");
+
+  const referenceDigits =
+    reference.replace(/\D/g, "");
+
+  const validDetails =
+    name.trim().length >= 2 &&
+    phoneDigits.length >= 10;
+
+  const validPayment =
+    paymentMethod !== null &&
+    bcvRate !== null &&
+    bank.trim().length >= 2 &&
+    referenceDigits.length >= 4 &&
+    receipt !== null;
+
+  const amountVes =
+    selectedService &&
+    bcvRate !== null
+      ? selectedService.price *
+        bcvRate
+      : null;
+
+  function formatVes(
+    amount: number
+  ) {
+    return new Intl.NumberFormat(
+      "es-VE",
+      {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }
+    ).format(amount);
+  }
+
+  function formatBcvRate(
+    rate: number
+  ) {
+    return new Intl.NumberFormat(
+      "es-VE",
+      {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 4,
+      }
+    ).format(rate);
+  }
+
+  function formatBcvDate() {
+    if (!bcvDate) {
+      return "";
+    }
+
+    const parts =
+      bcvDate.split("-");
+
+    if (parts.length !== 3) {
+      return bcvDate;
+    }
+
+    const [
+      year,
+      month,
+      day,
+    ] = parts;
+
+    return `${day}/${month}/${year}`;
+  }
+
+  function isPastDay(
+    day: number
+  ) {
+    const date = new Date(
+      currentMonth.getFullYear(),
+      currentMonth.getMonth(),
+      day
+    );
+
+    const normalizedToday =
+      new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate()
+      );
+
+    return (
+      date < normalizedToday
+    );
+  }
+
+  function isSunday(
+    day: number
+  ) {
+    return (
+      new Date(
+        currentMonth.getFullYear(),
+        currentMonth.getMonth(),
+        day
+      ).getDay() === 0
+    );
+  }
+
+  function selectCalendarDay(
+    day: number
+  ) {
+    if (
+      isPastDay(day) ||
+      isSunday(day)
+    ) {
+      return;
+    }
+
+    const date = new Date(
+      currentMonth.getFullYear(),
+      currentMonth.getMonth(),
+      day
+    );
+
+    setSelectedDate(date);
+    setSelectedTime(null);
+    setStep("time");
+  }
+
+  function changeMonth(
+    direction: number
+  ) {
+    setCurrentMonth(
+      new Date(
+        currentMonth.getFullYear(),
+        currentMonth.getMonth() +
+          direction,
+        1
+      )
+    );
+  }
+
+  function selectTodayTime(
+    time: string
+  ) {
+    setSelectedDate(
+      new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate()
+      )
+    );
+
+    setSelectedTime(time);
+    setStep("service");
+  }
+
+  function selectTime(
+    time: string
+  ) {
+    setSelectedTime(time);
+    setStep("service");
+  }
+
+  function selectService(
+    service: Service
+  ) {
+    setSelectedService(service);
+    setStep("details");
+  }
+
+  function selectPaymentMethod(
+    method:
+      | "mobile"
+      | "transfer"
+  ) {
+    setPaymentMethod(method);
+
+    setBank("");
+    setReference("");
+    setReceipt(null);
+
+    setStep(
+      "paymentDetails"
+    );
+  }
+
+  function handleReceipt(
+    event:
+      ChangeEvent<HTMLInputElement>
+  ) {
+    const file =
+      event.target.files?.[0];
+
+    if (!file) {
+      setReceipt(null);
+      return;
+    }
+
+    setReceipt(file);
+  }
+
+  function reportPayment() {
+    if (!validPayment) {
+      return;
+    }
+
+    setStep("success");
+  }
+
+  function startNewBooking() {
+    setSelectedDate(null);
+    setSelectedTime(null);
+    setSelectedService(null);
+
+    setName("");
+    setWhatsapp("");
+
+    setPaymentMethod(null);
+    setBank("");
+    setReference("");
+    setReceipt(null);
+
+    setCurrentMonth(
+      new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        1
+      )
+    );
+
+    setStep("home");
+  }
+
+  function goBack() {
+    if (
+      step === "calendar"
+    ) {
+      setStep("home");
+      return;
+    }
+
+    if (step === "time") {
+      setStep("calendar");
+      return;
+    }
+
+    if (
+      step === "service"
+    ) {
+      if (
+        selectedDate &&
+        selectedDate.toDateString() ===
+          today.toDateString()
+      ) {
+        setStep("home");
+      } else {
+        setStep("time");
+      }
+
+      return;
+    }
+
+    if (
+      step === "details"
+    ) {
+      setStep("service");
+      return;
+    }
+
+    if (
+      step ===
+      "paymentMethod"
+    ) {
+      setStep("details");
+      return;
+    }
+
+    if (
+      step ===
+      "paymentDetails"
+    ) {
+      setStep(
+        "paymentMethod"
+      );
+    }
+  }
+
+  function formatDate(
+    date: Date
+  ) {
+    return date.toLocaleDateString(
+      "es-VE",
+      {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      }
+    );
+  }
+
+  return (
+    <main className="min-h-[100svh] bg-[#090909] text-[#f5f1e8]">
+      <div className="mx-auto min-h-[100svh] w-full max-w-md sm:max-w-xl">
+
+        {step === "home" && (
+          <section className="flex min-h-[100svh] flex-col px-5 pb-6 pt-5">
+            <header className="flex items-center justify-between border-b border-white/10 pb-5">
+              <div className="flex items-center gap-3">
+                <div className="relative h-14 w-20 shrink-0">
+                  <Image
+                    src="/waestudio-logo.png"
+                    alt="WAESTUDIO"
+                    fill
+                    priority
+                    className="object-contain"
+                  />
+                </div>
+
+                <div>
+                  <p className="text-[10px] font-medium uppercase tracking-[0.26em] text-[#c5a66d]">
+                    WAESTUDIO
+                  </p>
+
+                  <p className="mt-1 text-[8px] uppercase tracking-[0.22em] text-white/30">
+                    Men&apos;s Grooming
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+
+                <span className="text-[11px] text-white/45">
+                  Disponible
+                </span>
+              </div>
+            </header>
+
+            <div className="flex flex-1 flex-col justify-center py-8">
+              <p className="mb-5 text-[10px] uppercase tracking-[0.3em] text-[#c5a66d]">
+                Barbería · Grooming
+              </p>
+
+              <h1 className="text-[46px] font-medium leading-[0.93] tracking-[-0.045em]">
+                Tu tiempo.
+                <br />
+                Tu estilo.
+                <br />
+                <span className="text-white/30">
+                  Tu momento.
+                </span>
+              </h1>
+
+              <p className="mt-6 max-w-sm text-[15px] leading-6 text-white/45">
+                Reserva tu cita en segundos.
+                Sin complicaciones.
+              </p>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setStep(
+                    "calendar"
+                  )
+                }
+                className="mt-8 min-h-14 w-full rounded-full bg-[#f5f1e8] px-6 text-sm font-semibold text-[#090909] transition active:scale-[0.98]"
+              >
+                Reservar cita
+              </button>
+
+              <div className="mt-10 rounded-[28px] border border-white/10 bg-white/[0.035] p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-[9px] uppercase tracking-[0.28em] text-white/30">
+                      Disponibilidad rápida
+                    </p>
+
+                    <h2 className="mt-3 text-3xl font-light">
+                      Hoy
+                    </h2>
+
+                    <p className="mt-1 text-xs text-white/35">
+                      Toca una hora para reservar
+                    </p>
+                  </div>
+
+                  <span className="rounded-full border border-[#c5a66d]/30 bg-[#c5a66d]/10 px-3 py-2 text-[10px] text-[#c5a66d]">
+                    {todayQuickHours.length} cupos
+                  </span>
+                </div>
+
+                <div className="mt-6 grid grid-cols-2 gap-2.5">
+                  {todayQuickHours.map(
+                    (time) => (
+                      <button
+                        type="button"
+                        key={time}
+                        onClick={() =>
+                          selectTodayTime(
+                            time
+                          )
+                        }
+                        className="min-h-12 rounded-xl border border-white/10 bg-white/[0.02] text-[13px] text-white/70 transition active:scale-95 active:bg-white/10"
+                      >
+                        {time}
+                      </button>
+                    )
+                  )}
+                </div>
+
+                <p className="mt-5 border-t border-white/10 pt-4 text-[10px] leading-4 text-white/25">
+                  Los horarios mostrados son los cupos disponibles para hoy.
+                </p>
+              </div>
+            </div>
+
+            <footer className="flex items-center justify-between border-t border-white/10 pt-5 text-[10px] text-white/25">
+              <p>
+                Solo con cita previa
+              </p>
+
+              <p>
+                WAESTUDIO
+              </p>
+            </footer>
+          </section>
+        )}
+
+        {step ===
+          "calendar" && (
+          <section className="flex min-h-[100svh] flex-col px-5 pb-7 pt-5">
+            <ScreenHeader
+              title="WAESTUDIO"
+              onBack={goBack}
+            />
+
+            <div className="mt-10">
+              <p className="text-[10px] uppercase tracking-[0.35em] text-[#c5a66d]">
+                Paso 1
+              </p>
+
+              <h2 className="mt-4 text-4xl font-medium tracking-[-0.04em]">
+                Elige
+                <br />
+                <span className="text-white/30">
+                  el día.
+                </span>
+              </h2>
+            </div>
+
+            <div className="mt-10 rounded-[30px] border border-white/10 bg-white/[0.035] p-5">
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() =>
+                    changeMonth(-1)
+                  }
+                  className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 text-white/50 active:scale-95"
+                >
+                  ←
+                </button>
+
+                <div className="text-center">
+                  <p className="text-lg font-medium">
+                    {
+                      months[
+                        currentMonth.getMonth()
+                      ]
+                    }
+                  </p>
+
+                  <p className="mt-1 text-[10px] tracking-[0.2em] text-white/30">
+                    {currentMonth.getFullYear()}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    changeMonth(1)
+                  }
+                  className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 text-white/50 active:scale-95"
+                >
+                  →
+                </button>
+              </div>
+
+              <div className="mt-7 grid grid-cols-7 gap-1.5">
+                {weekDays.map(
+                  (
+                    day,
+                    index
+                  ) => (
+                    <div
+                      key={`${day}-${index}`}
+                      className="flex h-8 items-center justify-center text-[10px] text-white/25"
+                    >
+                      {day}
+                    </div>
+                  )
+                )}
+
+                {calendarDays.map(
+                  (
+                    day,
+                    index
+                  ) => {
+                    if (!day) {
+                      return (
+                        <div
+                          key={`empty-${index}`}
+                        />
+                      );
+                    }
+
+                    const disabled =
+                      isPastDay(
+                        day
+                      ) ||
+                      isSunday(
+                        day
+                      );
+
+                    return (
+                      <button
+                        type="button"
+                        key={day}
+                        disabled={
+                          disabled
+                        }
+                        onClick={() =>
+                          selectCalendarDay(
+                            day
+                          )
+                        }
+                        className={`aspect-square rounded-full text-xs transition ${
+                          disabled
+                            ? "text-white/15"
+                            : "border border-white/10 bg-white/[0.025] text-white/70 active:scale-90 active:border-[#c5a66d]"
+                        }`}
+                      >
+                        {day}
+                      </button>
+                    );
+                  }
+                )}
+              </div>
+            </div>
+
+            <div className="mt-auto pt-8">
+              <p className="text-center text-[10px] leading-4 text-white/25">
+                Los domingos no están disponibles.
+              </p>
+            </div>
+          </section>
+        )}
+
+        {step === "time" &&
+          selectedDate && (
+            <section className="flex min-h-[100svh] flex-col px-5 pb-7 pt-5">
+              <ScreenHeader
+                title="WAESTUDIO"
+                onBack={goBack}
+              />
+
+              <div className="mt-10">
+                <p className="text-[10px] uppercase tracking-[0.35em] text-[#c5a66d]">
+                  Paso 2
+                </p>
+
+                <h2 className="mt-4 text-4xl font-medium tracking-[-0.04em]">
+                  Elige
+                  <br />
+                  <span className="text-white/30">
+                    la hora.
+                  </span>
+                </h2>
+
+                <p className="mt-5 text-sm capitalize text-white/40">
+                  {formatDate(
+                    selectedDate
+                  )}
+                </p>
+              </div>
+
+              <div className="mt-10 grid grid-cols-2 gap-3">
+                {availableHours.map(
+                  (time) => (
+                    <button
+                      type="button"
+                      key={time}
+                      onClick={() =>
+                        selectTime(
+                          time
+                        )
+                      }
+                      className="min-h-14 rounded-2xl border border-white/10 bg-white/[0.035] text-sm text-white/70 transition active:scale-95 active:border-[#c5a66d] active:bg-[#c5a66d]/10"
+                    >
+                      {time}
+                    </button>
+                  )
+                )}
+              </div>
+            </section>
+          )}
+
+        {step ===
+          "service" &&
+          selectedDate &&
+          selectedTime && (
+            <section className="flex min-h-[100svh] flex-col px-5 pb-7 pt-5">
+              <ScreenHeader
+                title="WAESTUDIO"
+                onBack={goBack}
+              />
+
+              <div className="mt-10">
+                <p className="text-[10px] uppercase tracking-[0.35em] text-[#c5a66d]">
+                  Paso 3
+                </p>
+
+                <h2 className="mt-4 text-4xl font-medium tracking-[-0.04em]">
+                  Elige tu
+                  <br />
+                  <span className="text-white/30">
+                    experiencia.
+                  </span>
+                </h2>
+
+                <div className="mt-5 flex items-center gap-2 text-xs text-white/35">
+                  <span className="capitalize">
+                    {formatDate(
+                      selectedDate
+                    )}
+                  </span>
+
+                  <span>·</span>
+
+                  <span>
+                    {selectedTime}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-9 space-y-4">
+                {services.map(
+                  (service) => {
+                    const serviceVes =
+                      bcvRate !==
+                      null
+                        ? service.price *
+                          bcvRate
+                        : null;
+
+                    return (
+                      <button
+                        type="button"
+                        key={
+                          service.id
+                        }
+                        onClick={() =>
+                          selectService(
+                            service
+                          )
+                        }
+                        className="w-full rounded-[28px] border border-white/10 bg-white/[0.035] p-6 text-left transition active:scale-[0.99] active:border-[#c5a66d]/60"
+                      >
+                        <div className="flex items-start justify-between gap-6">
+                          <div>
+                            <p className="text-[10px] uppercase tracking-[0.25em] text-[#c5a66d]">
+                              {
+                                service.duration
+                              }
+                            </p>
+
+                            <h3 className="mt-3 text-xl font-medium">
+                              {
+                                service.name
+                              }
+                            </h3>
+
+                            <p className="mt-2 text-xs leading-5 text-white/35">
+                              {
+                                service.description
+                              }
+                            </p>
+                          </div>
+
+                          <div className="text-right">
+                            <p className="text-3xl font-medium">
+                              $
+                              {
+                                service.price
+                              }
+                            </p>
+
+                            {serviceVes !==
+                              null && (
+                              <p className="mt-1 whitespace-nowrap text-[10px] text-white/30">
+                                Bs.{" "}
+                                {formatVes(
+                                  serviceVes
+                                )}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="mt-5 border-t border-white/10 pt-5">
+                          <div className="flex flex-wrap gap-2">
+                            {service.includes.map(
+                              (
+                                item
+                              ) => (
+                                <span
+                                  key={
+                                    item
+                                  }
+                                  className="rounded-full border border-white/10 px-3 py-1.5 text-[10px] text-white/40"
+                                >
+                                  {
+                                    item
+                                  }
+                                </span>
+                              )
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  }
+                )}
+              </div>
+            </section>
+          )}
+
+        {step ===
+          "details" &&
+          selectedDate &&
+          selectedTime &&
+          selectedService && (
+            <section className="flex min-h-[100svh] flex-col px-5 pb-7 pt-5">
+              <ScreenHeader
+                title="WAESTUDIO"
+                onBack={goBack}
+              />
+
+              <div className="mt-10">
+                <p className="text-[10px] uppercase tracking-[0.35em] text-[#c5a66d]">
+                  Paso 4
+                </p>
+
+                <h2 className="mt-4 text-4xl font-medium tracking-[-0.04em]">
+                  Tus
+                  <br />
+                  <span className="text-white/30">
+                    datos.
+                  </span>
+                </h2>
+              </div>
+
+              <div className="mt-9 space-y-5">
+                <div>
+                  <label className="mb-2 block text-[10px] uppercase tracking-[0.22em] text-white/30">
+                    Nombre
+                  </label>
+
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(
+                      event
+                    ) =>
+                      setName(
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    placeholder="Ej. Rafael Gutiérrez"
+                    autoComplete="name"
+                    className="min-h-14 w-full rounded-2xl border border-white/10 bg-white/[0.035] px-4 text-[15px] text-white outline-none placeholder:text-white/20 focus:border-[#c5a66d]/60"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-[10px] uppercase tracking-[0.22em] text-white/30">
+                    WhatsApp
+                  </label>
+
+                  <input
+                    type="tel"
+                    value={
+                      whatsapp
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      setWhatsapp(
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    placeholder="Ej. 0412 123 4567"
+                    autoComplete="tel"
+                    inputMode="tel"
+                    className="min-h-14 w-full rounded-2xl border border-white/10 bg-white/[0.035] px-4 text-[15px] text-white outline-none placeholder:text-white/20 focus:border-[#c5a66d]/60"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-8 rounded-[26px] border border-white/10 bg-white/[0.035] p-5">
+                <p className="text-[10px] uppercase tracking-[0.28em] text-[#c5a66d]">
+                  Resumen
+                </p>
+
+                <div className="mt-5 space-y-4 text-sm">
+                  <div className="flex justify-between gap-4">
+                    <span className="text-white/30">
+                      Servicio
+                    </span>
+
+                    <span className="text-right">
+                      {
+                        selectedService.name
+                      }
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between gap-4">
+                    <span className="text-white/30">
+                      Fecha
+                    </span>
+
+                    <span className="text-right capitalize">
+                      {formatDate(
+                        selectedDate
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between gap-4">
+                    <span className="text-white/30">
+                      Hora
+                    </span>
+
+                    <span>
+                      {
+                        selectedTime
+                      }
+                    </span>
+                  </div>
+
+                  <div className="flex items-end justify-between border-t border-white/10 pt-4">
+                    <div>
+                      <p className="text-white/30">
+                        Total
+                      </p>
+
+                      {amountVes !==
+                        null && (
+                        <p className="mt-1 text-[10px] text-white/25">
+                          Bs.{" "}
+                          {formatVes(
+                            amountVes
+                          )}{" "}
+                          BCV
+                        </p>
+                      )}
+                    </div>
+
+                    <span className="text-3xl font-medium">
+                      $
+                      {
+                        selectedService.price
+                      }
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-auto pt-8">
+                <button
+                  type="button"
+                  disabled={
+                    !validDetails
+                  }
+                  onClick={() =>
+                    setStep(
+                      "paymentMethod"
+                    )
+                  }
+                  className={`min-h-14 w-full rounded-full px-6 text-sm font-semibold transition ${
+                    validDetails
+                      ? "bg-[#f5f1e8] text-[#090909] active:scale-[0.98]"
+                      : "cursor-not-allowed bg-white/10 text-white/25"
+                  }`}
+                >
+                  Continuar al pago
+                </button>
+              </div>
+            </section>
+          )}
+
+        {step ===
+          "paymentMethod" &&
+          selectedDate &&
+          selectedTime &&
+          selectedService && (
+            <section className="flex min-h-[100svh] flex-col px-5 pb-8 pt-5">
+              <ScreenHeader
+                title="WAESTUDIO"
+                onBack={goBack}
+              />
+
+              <div className="mt-10">
+                <p className="text-[10px] uppercase tracking-[0.35em] text-[#c5a66d]">
+                  Último paso
+                </p>
+
+                <h2 className="mt-4 text-4xl font-medium tracking-[-0.04em]">
+                  ¿Cómo quieres
+                  <br />
+                  <span className="text-white/30">
+                    pagar?
+                  </span>
+                </h2>
+              </div>
+
+              <div className="mt-8 rounded-[28px] border border-[#c5a66d]/30 bg-[#c5a66d]/[0.06] p-5">
+                <p className="text-[10px] uppercase tracking-[0.25em] text-[#c5a66d]">
+                  Total de la reserva
+                </p>
+
+                <div className="mt-3 flex items-end justify-between gap-4">
+                  <p className="text-5xl font-medium">
+                    $
+                    {
+                      selectedService.price
+                    }
+                  </p>
+
+                  <div className="text-right">
+                    <p className="text-[10px] text-white/25">
+                      En bolívares
+                    </p>
+
+                    {bcvStatus ===
+                      "loading" && (
+                      <p className="mt-1 text-xs text-white/40">
+                        Consultando BCV...
+                      </p>
+                    )}
+
+                    {bcvStatus ===
+                      "success" &&
+                      amountVes !==
+                        null && (
+                        <p className="mt-1 text-lg font-medium text-[#c5a66d]">
+                          Bs.{" "}
+                          {formatVes(
+                            amountVes
+                          )}
+                        </p>
+                      )}
+
+                    {bcvStatus ===
+                      "error" && (
+                      <p className="mt-1 text-xs text-red-300/70">
+                        Tasa no disponible
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {bcvRate !==
+                  null && (
+                  <div className="mt-5 border-t border-white/10 pt-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <p className="text-[10px] text-white/25">
+                          Tasa BCV
+                        </p>
+
+                        <p className="mt-1 text-xs text-white/55">
+                          1 USD ={" "}
+                          {formatBcvRate(
+                            bcvRate
+                          )}{" "}
+                          Bs.
+                        </p>
+                      </div>
+
+                      {bcvDate && (
+                        <p className="text-[10px] text-white/25">
+                          {
+                            formatBcvDate()
+                          }
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {bcvStatus ===
+                  "error" && (
+                  <button
+                    type="button"
+                    onClick={
+                      retryBcvRate
+                    }
+                    className="mt-5 min-h-11 w-full rounded-xl border border-white/10 text-xs text-white/60"
+                  >
+                    Reintentar tasa BCV
+                  </button>
+                )}
+              </div>
+
+              <div className="mt-9 space-y-3">
+                <button
+                  type="button"
+                  onClick={() =>
+                    selectPaymentMethod(
+                      "mobile"
+                    )
+                  }
+                  className="flex min-h-24 w-full items-center justify-between rounded-[24px] border border-white/10 bg-white/[0.035] p-5 text-left transition active:scale-[0.99] active:border-[#c5a66d]/60"
+                >
+                  <div>
+                    <p className="text-base font-medium">
+                      Pago Móvil
+                    </p>
+
+                    <p className="mt-1 text-xs text-white/30">
+                      Pago en bolívares
+                    </p>
+                  </div>
+
+                  <span className="text-xl text-[#c5a66d]">
+                    →
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    selectPaymentMethod(
+                      "transfer"
+                    )
+                  }
+                  className="flex min-h-24 w-full items-center justify-between rounded-[24px] border border-white/10 bg-white/[0.035] p-5 text-left transition active:scale-[0.99] active:border-[#c5a66d]/60"
+                >
+                  <div>
+                    <p className="text-base font-medium">
+                      Transferencia
+                    </p>
+
+                    <p className="mt-1 text-xs text-white/30">
+                      Transferencia bancaria
+                    </p>
+                  </div>
+
+                  <span className="text-xl text-[#c5a66d]">
+                    →
+                  </span>
+                </button>
+              </div>
+
+              <div className="mt-auto pt-8">
+                <p className="text-center text-[10px] leading-4 text-white/25">
+                  El pago será verificado antes de confirmar definitivamente la cita.
+                </p>
+              </div>
+            </section>
+          )}
+
+        {step ===
+          "paymentDetails" &&
+          selectedDate &&
+          selectedTime &&
+          selectedService &&
+          paymentMethod && (
+            <section className="flex min-h-[100svh] flex-col px-5 pb-8 pt-5">
+              <ScreenHeader
+                title={
+                  paymentMethod ===
+                  "mobile"
+                    ? "PAGO MÓVIL"
+                    : "TRANSFERENCIA"
+                }
+                onBack={goBack}
+              />
+
+              <div className="mt-9">
+                <p className="text-[10px] uppercase tracking-[0.35em] text-[#c5a66d]">
+                  WAESTUDIO
+                </p>
+
+                <h2 className="mt-4 text-4xl font-medium tracking-[-0.04em]">
+                  Realiza
+                  <br />
+                  <span className="text-white/30">
+                    tu pago.
+                  </span>
+                </h2>
+              </div>
+
+              <div className="mt-8 rounded-[28px] border border-[#c5a66d]/30 bg-[#c5a66d]/[0.06] p-5">
+                <div className="flex items-end justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.25em] text-[#c5a66d]">
+                      Monto a pagar
+                    </p>
+
+                    {amountVes !==
+                      null ? (
+                      <p className="mt-2 text-4xl font-medium">
+                        Bs.{" "}
+                        {formatVes(
+                          amountVes
+                        )}
+                      </p>
+                    ) : (
+                      <p className="mt-2 text-lg text-white/40">
+                        Tasa BCV no disponible
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {bcvRate !==
+                  null && (
+                  <div className="mt-4 border-t border-white/10 pt-4">
+                    <p className="text-[10px] text-white/30">
+                      $
+                      {
+                        selectedService.price
+                      }{" "}
+                      ×{" "}
+                      {formatBcvRate(
+                        bcvRate
+                      )}{" "}
+                      Bs/USD
+                    </p>
+                  </div>
+                )}
+
+                {bcvStatus ===
+                  "error" && (
+                  <button
+                    type="button"
+                    onClick={
+                      retryBcvRate
+                    }
+                    className="mt-5 min-h-11 w-full rounded-xl border border-white/10 text-xs text-white/60"
+                  >
+                    Reintentar tasa BCV
+                  </button>
+                )}
+              </div>
+
+              <div className="mt-6 rounded-[26px] border border-white/10 bg-white/[0.035] p-5">
+                <p className="text-[10px] uppercase tracking-[0.25em] text-[#c5a66d]">
+                  Datos para pagar
+                </p>
+
+                {paymentMethod ===
+                "mobile" ? (
+                  <div className="mt-5 space-y-4 text-sm">
+                    <div className="flex justify-between gap-4">
+                      <span className="text-white/30">
+                        Banco
+                      </span>
+
+                      <span>
+                        Banesco
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between gap-4">
+                      <span className="text-white/30">
+                        Teléfono
+                      </span>
+
+                      <span>
+                        0412-0000000
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between gap-4">
+                      <span className="text-white/30">
+                        Cédula
+                      </span>
+
+                      <span>
+                        V-00.000.000
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-5 space-y-4 text-sm">
+                    <div className="flex justify-between gap-4">
+                      <span className="text-white/30">
+                        Banco
+                      </span>
+
+                      <span>
+                        Banesco
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between gap-4">
+                      <span className="text-white/30">
+                        Cuenta
+                      </span>
+
+                      <span className="text-right">
+                        0134-0000-00-0000000000
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between gap-4">
+                      <span className="text-white/30">
+                        Titular
+                      </span>
+
+                      <span>
+                        WAESTUDIO
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                <p className="mt-5 border-t border-white/10 pt-4 text-[10px] leading-4 text-white/25">
+                  Estos datos bancarios son demostrativos. Luego colocaremos los datos reales de WAESTUDIO.
+                </p>
+              </div>
+
+              <div className="mt-7 space-y-5">
+                <div>
+                  <label className="mb-2 block text-[10px] uppercase tracking-[0.22em] text-white/30">
+                    Banco desde donde pagaste
+                  </label>
+
+                  <input
+                    type="text"
+                    value={bank}
+                    onChange={(
+                      event
+                    ) =>
+                      setBank(
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    placeholder="Ej. Mercantil"
+                    className="min-h-14 w-full rounded-2xl border border-white/10 bg-white/[0.035] px-4 text-[15px] text-white outline-none placeholder:text-white/20 focus:border-[#c5a66d]/60"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-[10px] uppercase tracking-[0.22em] text-white/30">
+                    Número de referencia
+                  </label>
+
+                  <input
+                    type="text"
+                    value={reference}
+                    onChange={(
+                      event
+                    ) =>
+                      setReference(
+                        event
+                          .target
+                          .value
+                      )
+                    }
+                    placeholder="Ej. 583926"
+                    inputMode="numeric"
+                    className="min-h-14 w-full rounded-2xl border border-white/10 bg-white/[0.035] px-4 text-[15px] text-white outline-none placeholder:text-white/20 focus:border-[#c5a66d]/60"
+                  />
+                </div>
+
+                <div>
+                  <p className="mb-2 text-[10px] uppercase tracking-[0.22em] text-white/30">
+                    Comprobante
+                  </p>
+
+                  <label
+                    htmlFor="receipt"
+                    className={`flex min-h-28 w-full cursor-pointer flex-col items-center justify-center rounded-[22px] border border-dashed px-5 text-center transition ${
+                      receipt
+                        ? "border-[#c5a66d]/60 bg-[#c5a66d]/[0.06]"
+                        : "border-white/15 bg-white/[0.025]"
+                    }`}
+                  >
+                    {receipt ? (
+                      <>
+                        <span className="text-xl text-[#c5a66d]">
+                          ✓
+                        </span>
+
+                        <span className="mt-2 max-w-full truncate text-xs text-white/70">
+                          {
+                            receipt.name
+                          }
+                        </span>
+
+                        <span className="mt-1 text-[10px] text-white/30">
+                          Toca para cambiar
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-2xl text-white/40">
+                          +
+                        </span>
+
+                        <span className="mt-2 text-xs text-white/60">
+                          Subir captura del pago
+                        </span>
+
+                        <span className="mt-1 text-[10px] text-white/25">
+                          Selecciona una imagen desde tu teléfono
+                        </span>
+                      </>
+                    )}
+
+                    <input
+                      id="receipt"
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={
+                        handleReceipt
+                      }
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="mt-8">
+                <button
+                  type="button"
+                  disabled={
+                    !validPayment
+                  }
+                  onClick={
+                    reportPayment
+                  }
+                  className={`min-h-14 w-full rounded-full px-6 text-sm font-semibold transition ${
+                    validPayment
+                      ? "bg-[#f5f1e8] text-[#090909] active:scale-[0.98]"
+                      : "cursor-not-allowed bg-white/10 text-white/25"
+                  }`}
+                >
+                  Reportar pago
+                </button>
+
+                {bcvRate ===
+                  null && (
+                  <p className="mt-3 text-center text-[10px] text-white/25">
+                    Necesitamos obtener la tasa BCV antes de reportar el pago.
+                  </p>
+                )}
+              </div>
+            </section>
+          )}
+
+        {step ===
+          "success" &&
+          selectedDate &&
+          selectedTime &&
+          selectedService && (
+            <section className="flex min-h-[100svh] flex-col px-5 pb-8 pt-5">
+              <div className="flex flex-1 flex-col justify-center">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full border border-[#c5a66d]/40 bg-[#c5a66d]/10 text-2xl text-[#c5a66d]">
+                  ✓
+                </div>
+
+                <p className="mt-8 text-[10px] uppercase tracking-[0.35em] text-[#c5a66d]">
+                  Pago reportado
+                </p>
+
+                <h2 className="mt-4 text-4xl font-medium tracking-[-0.04em]">
+                  Recibimos
+                  <br />
+                  <span className="text-white/30">
+                    tu solicitud.
+                  </span>
+                </h2>
+
+                <p className="mt-5 text-sm leading-6 text-white/40">
+                  WAESTUDIO revisará el comprobante antes de confirmar definitivamente tu cita.
+                </p>
+
+                <div className="mt-9 rounded-[28px] border border-white/10 bg-white/[0.035] p-5">
+                  <div className="space-y-4 text-sm">
+                    <div className="flex justify-between gap-4">
+                      <span className="text-white/30">
+                        Cliente
+                      </span>
+
+                      <span className="text-right">
+                        {name}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between gap-4">
+                      <span className="text-white/30">
+                        Servicio
+                      </span>
+
+                      <span className="text-right">
+                        {
+                          selectedService.name
+                        }
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between gap-4">
+                      <span className="text-white/30">
+                        Fecha
+                      </span>
+
+                      <span className="text-right capitalize">
+                        {formatDate(
+                          selectedDate
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between gap-4">
+                      <span className="text-white/30">
+                        Hora
+                      </span>
+
+                      <span>
+                        {
+                          selectedTime
+                        }
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between gap-4">
+                      <span className="text-white/30">
+                        Total
+                      </span>
+
+                      <div className="text-right">
+                        <p>
+                          $
+                          {
+                            selectedService.price
+                          }
+                        </p>
+
+                        {amountVes !==
+                          null && (
+                          <p className="mt-1 text-[10px] text-white/30">
+                            Bs.{" "}
+                            {formatVes(
+                              amountVes
+                            )}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex justify-between gap-4 border-t border-white/10 pt-4">
+                      <span className="text-white/30">
+                        Estado
+                      </span>
+
+                      <span className="text-[#c5a66d]">
+                        Pago por verificar
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={
+                  startNewBooking
+                }
+                className="min-h-14 w-full rounded-full bg-[#f5f1e8] px-6 text-sm font-semibold text-[#090909] active:scale-[0.98]"
+              >
+                Volver al inicio
+              </button>
+            </section>
+          )}
+      </div>
+    </main>
+  );
+}
