@@ -55,6 +55,31 @@ type BookingApiResponse = {
   message?: string;
 };
 
+type AvailabilitySlot = {
+  time: string;
+  label: string;
+  available: boolean;
+  availableServices: string[];
+  reason: string | null;
+};
+
+type AvailabilityApiResponse = {
+  ok: boolean;
+  date: string;
+  weekday: number;
+  isOpen: boolean;
+  openTime: string | null;
+  closeTime: string | null;
+  slots: AvailabilitySlot[];
+  message?: string;
+};
+
+type AvailabilityStatus =
+  | "idle"
+  | "loading"
+  | "success"
+  | "error";
+
 function triggerTapFeedback() {
   if (
     typeof navigator !== "undefined" &&
@@ -243,6 +268,46 @@ export default function Home() {
     setBookingCode,
   ] = useState<string | null>(null);
 
+  const [
+    availabilitySlots,
+    setAvailabilitySlots,
+  ] = useState<AvailabilitySlot[]>([]);
+
+  const [
+    availabilityStatus,
+    setAvailabilityStatus,
+  ] = useState<AvailabilityStatus>("idle");
+
+  const [
+    availabilityError,
+    setAvailabilityError,
+  ] = useState<string | null>(null);
+
+  const [
+    todayAvailabilitySlots,
+    setTodayAvailabilitySlots,
+  ] = useState<AvailabilitySlot[]>([]);
+
+  const [
+    todayAvailabilityStatus,
+    setTodayAvailabilityStatus,
+  ] = useState<AvailabilityStatus>("loading");
+
+  const [
+    todayIsOpen,
+    setTodayIsOpen,
+  ] = useState<boolean | null>(null);
+
+  const [
+    selectedAvailableServices,
+    setSelectedAvailableServices,
+  ] = useState<string[]>([]);
+
+  const [
+    availabilityRefreshKey,
+    setAvailabilityRefreshKey,
+  ] = useState(0);
+
   useEffect(() => {
     async function loadRate() {
       try {
@@ -290,6 +355,135 @@ export default function Home() {
 
     loadRate();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTodayAvailability() {
+      try {
+        setTodayAvailabilityStatus("loading");
+
+        const date = formatApiDate(today);
+
+        const response = await fetch(
+          `/api/availability?date=${date}&t=${Date.now()}`,
+          {
+            cache: "no-store",
+          }
+        );
+
+        const data: AvailabilityApiResponse =
+          await response.json();
+
+        if (!response.ok || !data.ok) {
+          throw new Error(
+            data.message ||
+              "No fue posible consultar la disponibilidad."
+          );
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        setTodayIsOpen(data.isOpen);
+        setTodayAvailabilitySlots(
+          data.slots || []
+        );
+        setTodayAvailabilityStatus("success");
+      } catch (error) {
+        console.error(
+          "Error loading today availability:",
+          error
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        setTodayIsOpen(null);
+        setTodayAvailabilitySlots([]);
+        setTodayAvailabilityStatus("error");
+      }
+    }
+
+    loadTodayAvailability();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [today, availabilityRefreshKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSelectedDateAvailability() {
+      if (!selectedDate) {
+        setAvailabilitySlots([]);
+        setAvailabilityStatus("idle");
+        setAvailabilityError(null);
+        return;
+      }
+
+      try {
+        setAvailabilityStatus("loading");
+        setAvailabilityError(null);
+
+        const date = formatApiDate(
+          selectedDate
+        );
+
+        const response = await fetch(
+          `/api/availability?date=${date}&t=${Date.now()}`,
+          {
+            cache: "no-store",
+          }
+        );
+
+        const data: AvailabilityApiResponse =
+          await response.json();
+
+        if (!response.ok || !data.ok) {
+          throw new Error(
+            data.message ||
+              "No fue posible consultar la disponibilidad."
+          );
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        setAvailabilitySlots(
+          data.slots || []
+        );
+        setAvailabilityStatus("success");
+      } catch (error) {
+        console.error(
+          "Error loading selected date availability:",
+          error
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        setAvailabilitySlots([]);
+        setAvailabilityStatus("error");
+        setAvailabilityError(
+          error instanceof Error
+            ? error.message
+            : "No fue posible consultar la disponibilidad."
+        );
+      }
+    }
+
+    loadSelectedDateAvailability();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedDate, availabilityRefreshKey]);
 
   async function retryBcvRate() {
     try {
@@ -395,6 +589,32 @@ export default function Home() {
     bank.trim().length >= 2 &&
     referenceDigits.length >= 4 &&
     receipt !== null;
+
+  const todayQuickSlots =
+    todayAvailabilitySlots.filter(
+      (slot) =>
+        slot.available &&
+        todayQuickHours.includes(
+          slot.label
+        )
+    );
+
+  const visibleAvailabilitySlots =
+    availabilitySlots.filter(
+      (slot) =>
+        slot.available &&
+        availableHours.includes(
+          slot.label
+        )
+    );
+
+  const visibleServices =
+    services.filter(
+      (service) =>
+        selectedAvailableServices.includes(
+          service.id
+        )
+    );
 
   const amountVes =
     selectedService &&
@@ -539,6 +759,8 @@ export default function Home() {
 
     setSelectedDate(date);
     setSelectedTime(null);
+    setSelectedService(null);
+    setSelectedAvailableServices([]);
     setStep("time");
   }
 
@@ -558,6 +780,17 @@ export default function Home() {
   function selectTodayTime(
     time: string
   ) {
+    const slot =
+      todayAvailabilitySlots.find(
+        (item) =>
+          item.label === time &&
+          item.available
+      );
+
+    if (!slot) {
+      return;
+    }
+
     setSelectedDate(
       new Date(
         today.getFullYear(),
@@ -567,19 +800,46 @@ export default function Home() {
     );
 
     setSelectedTime(time);
+    setSelectedService(null);
+    setSelectedAvailableServices(
+      slot.availableServices
+    );
     setStep("service");
   }
 
   function selectTime(
     time: string
   ) {
+    const slot =
+      availabilitySlots.find(
+        (item) =>
+          item.label === time &&
+          item.available
+      );
+
+    if (!slot) {
+      return;
+    }
+
     setSelectedTime(time);
+    setSelectedService(null);
+    setSelectedAvailableServices(
+      slot.availableServices
+    );
     setStep("service");
   }
 
   function selectService(
     service: Service
   ) {
+    if (
+      !selectedAvailableServices.includes(
+        service.id
+      )
+    ) {
+      return;
+    }
+
     setSelectedService(service);
     setStep("details");
   }
@@ -698,6 +958,9 @@ export default function Home() {
       setBookingCode(
         data.bookingCode || null
       );
+      setAvailabilityRefreshKey(
+        (value) => value + 1
+      );
       setStep("success");
     } catch (error) {
       console.error(
@@ -719,6 +982,7 @@ export default function Home() {
     setSelectedDate(null);
     setSelectedTime(null);
     setSelectedService(null);
+    setSelectedAvailableServices([]);
 
     setName("");
     setWhatsapp("");
@@ -840,10 +1104,24 @@ export default function Home() {
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    todayAvailabilityStatus ===
+                    "loading"
+                      ? "bg-white/30"
+                      : todayIsOpen
+                        ? "bg-emerald-400"
+                        : "bg-red-400/70"
+                  }`}
+                />
 
                 <span className="text-[11px] text-white/45">
-                  Disponible
+                  {todayAvailabilityStatus ===
+                  "loading"
+                    ? "Consultando"
+                    : todayIsOpen
+                      ? "Disponible"
+                      : "Cerrado hoy"}
                 </span>
               </div>
             </header>
@@ -898,32 +1176,93 @@ export default function Home() {
                   </div>
 
                   <span className="rounded-full border border-[#c5a66d]/30 bg-[#c5a66d]/10 px-3 py-2 text-[10px] text-[#c5a66d]">
-                    {todayQuickHours.length} cupos
+                    {todayAvailabilityStatus ===
+                    "loading"
+                      ? "..."
+                      : todayIsOpen
+                        ? `${todayQuickSlots.length} cupos`
+                        : "Cerrado"}
                   </span>
                 </div>
 
-                <div className="mt-6 grid grid-cols-2 gap-2.5">
-                  {todayQuickHours.map(
-                    (time) => (
-                      <button
-                        type="button"
-                        key={time}
-                        onClick={() =>
-                          selectTodayTime(
-                            time
-                          )
-                        }
-                        onPointerDown={triggerTapFeedback}
-                        className="min-h-12 touch-manipulation select-none rounded-xl border border-white/10 bg-white/[0.02] text-[13px] text-white/70 transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.94] active:border-[#c5a66d]/70 active:bg-[#c5a66d]/15 active:text-[#f5f1e8] active:shadow-[inset_0_2px_8px_rgba(0,0,0,0.35)]"
-                      >
-                        {time}
-                      </button>
-                    )
-                  )}
-                </div>
+                {todayAvailabilityStatus ===
+                  "loading" && (
+                  <div className="mt-6 grid grid-cols-2 gap-2.5">
+                    {[1, 2, 3, 4].map(
+                      (item) => (
+                        <div
+                          key={item}
+                          className="min-h-12 animate-pulse rounded-xl border border-white/5 bg-white/[0.03]"
+                        />
+                      )
+                    )}
+                  </div>
+                )}
+
+                {todayAvailabilityStatus ===
+                  "error" && (
+                  <div className="mt-6 rounded-2xl border border-red-400/20 bg-red-400/[0.05] p-4 text-center">
+                    <p className="text-xs text-red-200/70">
+                      No pudimos consultar los cupos de hoy.
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAvailabilityRefreshKey(
+                          (value) => value + 1
+                        )
+                      }
+                      onPointerDown={triggerTapFeedback}
+                      className="mt-3 min-h-10 rounded-full border border-white/10 px-4 text-[11px] text-white/60 transition-all active:scale-95 active:border-[#c5a66d]/60"
+                    >
+                      Reintentar
+                    </button>
+                  </div>
+                )}
+
+                {todayAvailabilityStatus ===
+                  "success" &&
+                  todayIsOpen &&
+                  todayQuickSlots.length >
+                    0 && (
+                  <div className="mt-6 grid grid-cols-2 gap-2.5">
+                    {todayQuickSlots.map(
+                      (slot) => (
+                        <button
+                          type="button"
+                          key={slot.time}
+                          onClick={() =>
+                            selectTodayTime(
+                              slot.label
+                            )
+                          }
+                          onPointerDown={triggerTapFeedback}
+                          className="min-h-12 touch-manipulation select-none rounded-xl border border-white/10 bg-white/[0.02] text-[13px] text-white/70 transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.94] active:border-[#c5a66d]/70 active:bg-[#c5a66d]/15 active:text-[#f5f1e8] active:shadow-[inset_0_2px_8px_rgba(0,0,0,0.35)]"
+                        >
+                          {slot.label}
+                        </button>
+                      )
+                    )}
+                  </div>
+                )}
+
+                {todayAvailabilityStatus ===
+                  "success" &&
+                  (!todayIsOpen ||
+                    todayQuickSlots.length ===
+                      0) && (
+                  <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.02] p-4 text-center">
+                    <p className="text-xs text-white/40">
+                      {todayIsOpen
+                        ? "No quedan cupos rápidos disponibles para hoy."
+                        : "Hoy la barbería está cerrada."}
+                    </p>
+                  </div>
+                )}
 
                 <p className="mt-5 border-t border-white/10 pt-4 text-[10px] leading-4 text-white/25">
-                  Los horarios mostrados son los cupos disponibles para hoy.
+                  Los horarios mostrados se consultan en tiempo real.
                 </p>
               </div>
             </div>
@@ -1100,25 +1439,89 @@ export default function Home() {
                 </p>
               </div>
 
-              <div className="mt-10 grid grid-cols-2 gap-3">
-                {availableHours.map(
-                  (time) => (
-                    <button
-                      type="button"
-                      key={time}
-                      onClick={() =>
-                        selectTime(
-                          time
-                        )
-                      }
-                      onPointerDown={triggerTapFeedback}
-                      className="min-h-14 touch-manipulation select-none rounded-2xl border border-white/10 bg-white/[0.035] text-sm text-white/70 transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.94] active:border-[#c5a66d] active:bg-[#c5a66d]/20 active:text-[#f5f1e8] active:shadow-[inset_0_2px_9px_rgba(0,0,0,0.38)]"
-                    >
-                      {time}
-                    </button>
-                  )
-                )}
-              </div>
+              {availabilityStatus ===
+                "loading" && (
+                <div className="mt-10 grid grid-cols-2 gap-3">
+                  {[1, 2, 3, 4, 5, 6].map(
+                    (item) => (
+                      <div
+                        key={item}
+                        className="min-h-14 animate-pulse rounded-2xl border border-white/5 bg-white/[0.03]"
+                      />
+                    )
+                  )}
+                </div>
+              )}
+
+              {availabilityStatus ===
+                "error" && (
+                <div className="mt-10 rounded-[24px] border border-red-400/20 bg-red-400/[0.05] p-5 text-center">
+                  <p className="text-sm text-red-200/70">
+                    {availabilityError ||
+                      "No pudimos consultar los horarios."}
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAvailabilityRefreshKey(
+                        (value) => value + 1
+                      )
+                    }
+                    onPointerDown={triggerTapFeedback}
+                    className="mt-4 min-h-11 rounded-full border border-white/10 px-5 text-xs text-white/60 transition-all active:scale-95 active:border-[#c5a66d]/60"
+                  >
+                    Reintentar
+                  </button>
+                </div>
+              )}
+
+              {availabilityStatus ===
+                "success" &&
+                visibleAvailabilitySlots.length >
+                  0 && (
+                <div className="mt-10 grid grid-cols-2 gap-3">
+                  {visibleAvailabilitySlots.map(
+                    (slot) => (
+                      <button
+                        type="button"
+                        key={slot.time}
+                        onClick={() =>
+                          selectTime(
+                            slot.label
+                          )
+                        }
+                        onPointerDown={triggerTapFeedback}
+                        className="min-h-14 touch-manipulation select-none rounded-2xl border border-white/10 bg-white/[0.035] text-sm text-white/70 transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.94] active:border-[#c5a66d] active:bg-[#c5a66d]/20 active:text-[#f5f1e8] active:shadow-[inset_0_2px_9px_rgba(0,0,0,0.38)]"
+                      >
+                        {slot.label}
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
+
+              {availabilityStatus ===
+                "success" &&
+                visibleAvailabilitySlots.length ===
+                  0 && (
+                <div className="mt-10 rounded-[24px] border border-white/10 bg-white/[0.03] p-5 text-center">
+                  <p className="text-sm text-white/45">
+                    No quedan horarios disponibles para este día.
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setStep("calendar")
+                    }
+                    onPointerDown={triggerTapFeedback}
+                    className="mt-4 min-h-11 rounded-full border border-[#c5a66d]/30 bg-[#c5a66d]/[0.06] px-5 text-xs text-[#c5a66d] transition-all active:scale-95"
+                  >
+                    Elegir otro día
+                  </button>
+                </div>
+              )}
             </section>
           )}
 
@@ -1161,7 +1564,7 @@ export default function Home() {
               </div>
 
               <div className="mt-9 space-y-4">
-                {services.map(
+                {visibleServices.map(
                   (service) => {
                     const serviceVes =
                       bcvRate !==
@@ -1248,6 +1651,26 @@ export default function Home() {
                       </button>
                     );
                   }
+                )}
+
+                {visibleServices.length ===
+                  0 && (
+                  <div className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5 text-center">
+                    <p className="text-sm text-white/45">
+                      No hay servicios disponibles en este horario.
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setStep("time")
+                      }
+                      onPointerDown={triggerTapFeedback}
+                      className="mt-4 min-h-11 rounded-full border border-[#c5a66d]/30 bg-[#c5a66d]/[0.06] px-5 text-xs text-[#c5a66d] transition-all active:scale-95"
+                    >
+                      Elegir otra hora
+                    </button>
+                  </div>
                 )}
               </div>
             </section>
