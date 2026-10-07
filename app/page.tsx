@@ -7,6 +7,13 @@ import {
   useMemo,
   useState,
 } from "react";
+import Alert from "@mui/material/Alert";
+import Button from "@mui/material/Button";
+import CircularProgress from "@mui/material/CircularProgress";
+import IconButton from "@mui/material/IconButton";
+import Skeleton from "@mui/material/Skeleton";
+import TextField from "@mui/material/TextField";
+import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 
 type Step =
   | "home"
@@ -21,6 +28,12 @@ type Step =
 type PaymentMethod =
   | "mobile"
   | "transfer"
+  | "cash"
+  | null;
+
+type CashCurrency =
+  | "USD"
+  | "VES"
   | null;
 
 type Service = {
@@ -50,6 +63,8 @@ type BookingApiResponse = {
   ok: boolean;
   bookingId?: string;
   bookingCode?: string;
+  paymentMethod?: string;
+  cashCurrency?: string;
   status?: string;
   code?: string;
   message?: string;
@@ -163,6 +178,54 @@ const weekDays = [
   "S",
 ];
 
+const textFieldSx = {
+  "& .MuiOutlinedInput-root": {
+    minHeight: 56,
+    borderRadius: "16px",
+    backgroundColor: "rgba(255, 255, 255, 0.035)",
+  },
+  "& .MuiInputBase-input": {
+    fontSize: "15px",
+    color: "#f5f1e8",
+  },
+  "& .MuiInputBase-input::placeholder": {
+    color: "rgba(245, 241, 232, 0.22)",
+    opacity: 1,
+  },
+};
+
+const primaryActionSx = {
+  minHeight: 56,
+  px: 3,
+  backgroundColor: "#f5f1e8",
+  color: "#090909",
+  fontSize: 14,
+  fontWeight: 600,
+  "&:hover": {
+    backgroundColor: "#f5f1e8",
+  },
+  "&:active": {
+    backgroundColor: "#ddd7cb",
+    boxShadow: "inset 0 3px 10px rgba(0,0,0,0.28)",
+  },
+  "&.Mui-disabled": {
+    backgroundColor: "rgba(255, 255, 255, 0.10)",
+    color: "rgba(245, 241, 232, 0.25)",
+  },
+};
+
+const secondaryActionSx = {
+  minHeight: 44,
+  px: 2.5,
+  borderColor: "rgba(255, 255, 255, 0.12)",
+  color: "rgba(245, 241, 232, 0.62)",
+  fontSize: 12,
+  "&:hover": {
+    borderColor: "rgba(197, 166, 109, 0.55)",
+    backgroundColor: "rgba(197, 166, 109, 0.06)",
+  },
+};
+
 function ScreenHeader({
   title,
   onBack,
@@ -172,15 +235,30 @@ function ScreenHeader({
 }) {
   return (
     <header className="flex items-center justify-between">
-      <button
-        type="button"
+      <IconButton
         onClick={onBack}
         onPointerDown={triggerTapFeedback}
         aria-label="Volver"
-        className="flex h-11 w-11 touch-manipulation select-none items-center justify-center rounded-full border border-white/10 text-lg text-white/60 transition-all duration-100 ease-out active:translate-y-px active:scale-90 active:border-[#c5a66d]/70 active:bg-[#c5a66d]/10 active:text-[#c5a66d]"
+        size="small"
+        sx={{
+          width: 44,
+          height: 44,
+          border: "1px solid rgba(255, 255, 255, 0.10)",
+          color: "rgba(245, 241, 232, 0.60)",
+          "&:hover": {
+            borderColor: "rgba(197, 166, 109, 0.45)",
+            backgroundColor: "rgba(197, 166, 109, 0.06)",
+            color: "#c5a66d",
+          },
+          "&:active": {
+            borderColor: "rgba(197, 166, 109, 0.70)",
+            backgroundColor: "rgba(197, 166, 109, 0.10)",
+            color: "#c5a66d",
+          },
+        }}
       >
-        ←
-      </button>
+        <ArrowBackRoundedIcon fontSize="small" />
+      </IconButton>
 
       <p className="text-[10px] uppercase tracking-[0.3em] text-white/30">
         {title}
@@ -234,6 +312,11 @@ export default function Home() {
     paymentMethod,
     setPaymentMethod,
   ] = useState<PaymentMethod>(null);
+
+  const [
+    cashCurrency,
+    setCashCurrency,
+  ] = useState<CashCurrency>(null);
 
   const [bank, setBank] =
     useState("");
@@ -583,12 +666,21 @@ export default function Home() {
     name.trim().length >= 2 &&
     phoneDigits.length >= 10;
 
+  const isCashPayment =
+    paymentMethod === "cash";
+
+  const isElectronicPayment =
+    paymentMethod === "mobile" ||
+    paymentMethod === "transfer";
+
   const validPayment =
-    paymentMethod !== null &&
-    bcvRate !== null &&
-    bank.trim().length >= 2 &&
-    referenceDigits.length >= 4 &&
-    receipt !== null;
+    isCashPayment
+      ? cashCurrency !== null
+      : isElectronicPayment &&
+        bcvRate !== null &&
+        bank.trim().length >= 2 &&
+        referenceDigits.length >= 4 &&
+        receipt !== null;
 
   const todayQuickSlots =
     todayAvailabilitySlots.filter(
@@ -618,7 +710,8 @@ export default function Home() {
 
   const amountVes =
     selectedService &&
-    bcvRate !== null
+    bcvRate !== null &&
+    paymentMethod !== "cash"
       ? selectedService.price *
         bcvRate
       : null;
@@ -848,8 +941,10 @@ export default function Home() {
     method:
       | "mobile"
       | "transfer"
+      | "cash"
   ) {
     setPaymentMethod(method);
+    setCashCurrency(null);
 
     setBank("");
     setReference("");
@@ -883,9 +978,21 @@ export default function Home() {
       !selectedDate ||
       !selectedTime ||
       !selectedService ||
-      !paymentMethod ||
-      bcvRate === null ||
-      !receipt
+      !paymentMethod
+    ) {
+      return;
+    }
+
+    if (
+      paymentMethod === "cash" &&
+      !cashCurrency
+    ) {
+      return;
+    }
+
+    if (
+      paymentMethod !== "cash" &&
+      (bcvRate === null || !receipt)
     ) {
       return;
     }
@@ -920,22 +1027,33 @@ export default function Home() {
         "paymentMethod",
         paymentMethod
       );
-      formData.append(
-        "payerBank",
-        bank.trim()
-      );
-      formData.append(
-        "reference",
-        reference.trim()
-      );
-      formData.append(
-        "bcvRate",
-        String(bcvRate)
-      );
-      formData.append(
-        "receipt",
-        receipt
-      );
+
+      if (paymentMethod === "cash") {
+        formData.append(
+          "cashCurrency",
+          cashCurrency || ""
+        );
+      } else {
+        formData.append(
+          "payerBank",
+          bank.trim()
+        );
+        formData.append(
+          "reference",
+          reference.trim()
+        );
+        formData.append(
+          "bcvRate",
+          String(bcvRate)
+        );
+
+        if (receipt) {
+          formData.append(
+            "receipt",
+            receipt
+          );
+        }
+      }
 
       const response = await fetch(
         "/api/bookings",
@@ -988,6 +1106,7 @@ export default function Home() {
     setWhatsapp("");
 
     setPaymentMethod(null);
+    setCashCurrency(null);
     setBank("");
     setReference("");
     setReceipt(null);
@@ -1146,18 +1265,37 @@ export default function Home() {
                 Sin complicaciones.
               </p>
 
-              <button
+              <Button
                 type="button"
+                variant="contained"
+                fullWidth
+                disableRipple
                 onClick={() =>
                   setStep(
                     "calendar"
                   )
                 }
                 onPointerDown={triggerTapFeedback}
-                className="mt-8 min-h-14 w-full touch-manipulation select-none rounded-full bg-[#f5f1e8] px-6 text-sm font-semibold text-[#090909] transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.96] active:bg-[#ddd7cb] active:shadow-[inset_0_3px_10px_rgba(0,0,0,0.28)]"
+                sx={{
+                  mt: 4,
+                  minHeight: 56,
+                  px: 3,
+                  backgroundColor: "#f5f1e8",
+                  color: "#090909",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  "&:hover": {
+                    backgroundColor: "#f5f1e8",
+                  },
+                  "&:active": {
+                    backgroundColor: "#ddd7cb",
+                    boxShadow:
+                      "inset 0 3px 10px rgba(0,0,0,0.28)",
+                  },
+                }}
               >
                 Reservar cita
-              </button>
+              </Button>
 
               <div className="mt-10 rounded-[28px] border border-white/10 bg-white/[0.035] p-5">
                 <div className="flex items-start justify-between">
@@ -1190,9 +1328,15 @@ export default function Home() {
                   <div className="mt-6 grid grid-cols-2 gap-2.5">
                     {[1, 2, 3, 4].map(
                       (item) => (
-                        <div
+                        <Skeleton
                           key={item}
-                          className="min-h-12 animate-pulse rounded-xl border border-white/5 bg-white/[0.03]"
+                          variant="rounded"
+                          animation="wave"
+                          height={48}
+                          sx={{
+                            borderRadius: "12px",
+                            backgroundColor: "rgba(255, 255, 255, 0.035)",
+                          }}
                         />
                       )
                     )}
@@ -1201,23 +1345,37 @@ export default function Home() {
 
                 {todayAvailabilityStatus ===
                   "error" && (
-                  <div className="mt-6 rounded-2xl border border-red-400/20 bg-red-400/[0.05] p-4 text-center">
-                    <p className="text-xs text-red-200/70">
+                  <div className="mt-6">
+                    <Alert
+                      severity="error"
+                      variant="outlined"
+                      sx={{
+                        borderRadius: "16px",
+                        borderColor: "rgba(248, 113, 113, 0.20)",
+                        backgroundColor: "rgba(248, 113, 113, 0.05)",
+                        color: "rgba(254, 202, 202, 0.78)",
+                        fontSize: 12,
+                      }}
+                    >
                       No pudimos consultar los cupos de hoy.
-                    </p>
+                    </Alert>
 
-                    <button
+                    <Button
                       type="button"
+                      variant="outlined"
                       onClick={() =>
                         setAvailabilityRefreshKey(
                           (value) => value + 1
                         )
                       }
                       onPointerDown={triggerTapFeedback}
-                      className="mt-3 min-h-10 rounded-full border border-white/10 px-4 text-[11px] text-white/60 transition-all active:scale-95 active:border-[#c5a66d]/60"
+                      sx={{
+                        ...secondaryActionSx,
+                        mt: 1.5,
+                      }}
                     >
                       Reintentar
-                    </button>
+                    </Button>
                   </div>
                 )}
 
@@ -1444,9 +1602,15 @@ export default function Home() {
                 <div className="mt-10 grid grid-cols-2 gap-3">
                   {[1, 2, 3, 4, 5, 6].map(
                     (item) => (
-                      <div
+                      <Skeleton
                         key={item}
-                        className="min-h-14 animate-pulse rounded-2xl border border-white/5 bg-white/[0.03]"
+                        variant="rounded"
+                        animation="wave"
+                        height={56}
+                        sx={{
+                          borderRadius: "16px",
+                          backgroundColor: "rgba(255, 255, 255, 0.035)",
+                        }}
                       />
                     )
                   )}
@@ -1455,24 +1619,37 @@ export default function Home() {
 
               {availabilityStatus ===
                 "error" && (
-                <div className="mt-10 rounded-[24px] border border-red-400/20 bg-red-400/[0.05] p-5 text-center">
-                  <p className="text-sm text-red-200/70">
+                <div className="mt-10">
+                  <Alert
+                    severity="error"
+                    variant="outlined"
+                    sx={{
+                      borderRadius: "20px",
+                      borderColor: "rgba(248, 113, 113, 0.20)",
+                      backgroundColor: "rgba(248, 113, 113, 0.05)",
+                      color: "rgba(254, 202, 202, 0.78)",
+                    }}
+                  >
                     {availabilityError ||
                       "No pudimos consultar los horarios."}
-                  </p>
+                  </Alert>
 
-                  <button
+                  <Button
                     type="button"
+                    variant="outlined"
                     onClick={() =>
                       setAvailabilityRefreshKey(
                         (value) => value + 1
                       )
                     }
                     onPointerDown={triggerTapFeedback}
-                    className="mt-4 min-h-11 rounded-full border border-white/10 px-5 text-xs text-white/60 transition-all active:scale-95 active:border-[#c5a66d]/60"
+                    sx={{
+                      ...secondaryActionSx,
+                      mt: 2,
+                    }}
                   >
                     Reintentar
-                  </button>
+                  </Button>
                 </div>
               )}
 
@@ -1707,21 +1884,16 @@ export default function Home() {
                     Nombre
                   </label>
 
-                  <input
+                  <TextField
                     type="text"
                     value={name}
-                    onChange={(
-                      event
-                    ) =>
-                      setName(
-                        event
-                          .target
-                          .value
-                      )
+                    onChange={(event) =>
+                      setName(event.target.value)
                     }
                     placeholder="Ej. Rafael Gutiérrez"
                     autoComplete="name"
-                    className="min-h-14 w-full rounded-2xl border border-white/10 bg-white/[0.035] px-4 text-[15px] text-white outline-none placeholder:text-white/20 focus:border-[#c5a66d]/60"
+                    fullWidth
+                    sx={textFieldSx}
                   />
                 </div>
 
@@ -1730,24 +1902,21 @@ export default function Home() {
                     WhatsApp
                   </label>
 
-                  <input
+                  <TextField
                     type="tel"
-                    value={
-                      whatsapp
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      setWhatsapp(
-                        event
-                          .target
-                          .value
-                      )
+                    value={whatsapp}
+                    onChange={(event) =>
+                      setWhatsapp(event.target.value)
                     }
                     placeholder="Ej. 0412 123 4567"
                     autoComplete="tel"
-                    inputMode="tel"
-                    className="min-h-14 w-full rounded-2xl border border-white/10 bg-white/[0.035] px-4 text-[15px] text-white outline-none placeholder:text-white/20 focus:border-[#c5a66d]/60"
+                    fullWidth
+                    slotProps={{
+                      htmlInput: {
+                        inputMode: "tel",
+                      },
+                    }}
+                    sx={textFieldSx}
                   />
                 </div>
               </div>
@@ -1823,25 +1992,22 @@ export default function Home() {
               </div>
 
               <div className="mt-auto pt-8">
-                <button
+                <Button
                   type="button"
-                  disabled={
-                    !validDetails
-                  }
+                  variant="contained"
+                  fullWidth
+                  disableRipple
+                  disabled={!validDetails}
                   onClick={() =>
                     setStep(
                       "paymentMethod"
                     )
                   }
                   onPointerDown={triggerTapFeedback}
-                  className={`min-h-14 w-full touch-manipulation select-none rounded-full px-6 text-sm font-semibold transition-all duration-100 ease-out ${
-                    validDetails
-                      ? "bg-[#f5f1e8] text-[#090909] active:translate-y-[2px] active:scale-[0.96] active:bg-[#ddd7cb] active:shadow-[inset_0_3px_10px_rgba(0,0,0,0.28)]"
-                      : "cursor-not-allowed bg-white/10 text-white/25"
-                  }`}
+                  sx={primaryActionSx}
                 >
                   Continuar al pago
-                </button>
+                </Button>
               </div>
             </section>
           )}
@@ -1948,16 +2114,22 @@ export default function Home() {
 
                 {bcvStatus ===
                   "error" && (
-                  <button
+                  <Button
                     type="button"
+                    variant="outlined"
+                    fullWidth
                     onClick={
                       retryBcvRate
                     }
                     onPointerDown={triggerTapFeedback}
-                    className="mt-5 min-h-11 w-full touch-manipulation select-none rounded-xl border border-white/10 text-xs text-white/60 transition-all duration-100 ease-out active:translate-y-px active:scale-[0.97] active:border-[#c5a66d]/60 active:bg-[#c5a66d]/10"
+                    sx={{
+                      ...secondaryActionSx,
+                      mt: 2.5,
+                      borderRadius: "12px",
+                    }}
                   >
                     Reintentar tasa BCV
-                  </button>
+                  </Button>
                 )}
               </div>
 
@@ -2011,11 +2183,36 @@ export default function Home() {
                     →
                   </span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    selectPaymentMethod(
+                      "cash"
+                    )
+                  }
+                  onPointerDown={triggerTapFeedback}
+                  className="flex min-h-24 w-full touch-manipulation select-none items-center justify-between rounded-[24px] border border-white/10 bg-white/[0.035] p-5 text-left transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.96] active:border-[#c5a66d]/70 active:bg-[#c5a66d]/[0.12] active:shadow-[inset_0_3px_12px_rgba(0,0,0,0.34)]"
+                >
+                  <div>
+                    <p className="text-base font-medium">
+                      Efectivo
+                    </p>
+
+                    <p className="mt-1 text-xs text-white/30">
+                      Paga al llegar · USD o Bs.
+                    </p>
+                  </div>
+
+                  <span className="text-xl text-[#c5a66d]">
+                    →
+                  </span>
+                </button>
               </div>
 
               <div className="mt-auto pt-8">
                 <p className="text-center text-[10px] leading-4 text-white/25">
-                  El pago será verificado antes de confirmar definitivamente la cita.
+                  Pago Móvil y Transferencia requieren verificación. En efectivo, pagas al llegar al local.
                 </p>
               </div>
             </section>
@@ -2030,10 +2227,11 @@ export default function Home() {
             <section className="flex min-h-[100svh] flex-col px-5 pb-8 pt-5">
               <ScreenHeader
                 title={
-                  paymentMethod ===
-                  "mobile"
+                  paymentMethod === "mobile"
                     ? "PAGO MÓVIL"
-                    : "TRANSFERENCIA"
+                    : paymentMethod === "transfer"
+                      ? "TRANSFERENCIA"
+                      : "EFECTIVO"
                 }
                 onBack={goBack}
               />
@@ -2044,254 +2242,366 @@ export default function Home() {
                 </p>
 
                 <h2 className="mt-4 text-4xl font-medium tracking-[-0.04em]">
-                  Realiza
+                  {paymentMethod === "cash"
+                    ? "Paga"
+                    : "Realiza"}
                   <br />
                   <span className="text-white/30">
-                    tu pago.
+                    {paymentMethod === "cash"
+                      ? "al llegar."
+                      : "tu pago."}
                   </span>
                 </h2>
               </div>
 
-              <div className="mt-8 rounded-[28px] border border-[#c5a66d]/30 bg-[#c5a66d]/[0.06] p-5">
-                <div className="flex items-end justify-between gap-4">
-                  <div>
+              {paymentMethod === "cash" ? (
+                <>
+                  <div className="mt-8 rounded-[28px] border border-[#c5a66d]/30 bg-[#c5a66d]/[0.06] p-5">
                     <p className="text-[10px] uppercase tracking-[0.25em] text-[#c5a66d]">
-                      Monto a pagar
+                      Precio del servicio
                     </p>
 
-                    {amountVes !==
-                      null ? (
-                      <p className="mt-2 text-4xl font-medium">
-                        Bs.{" "}
-                        {formatVes(
-                          amountVes
+                    <p className="mt-2 text-5xl font-medium">
+                      ${selectedService.price}
+                    </p>
+
+                    <p className="mt-4 border-t border-white/10 pt-4 text-[10px] leading-4 text-white/30">
+                      El pago se realizará en efectivo directamente en WAESTUDIO. Esta opción no realiza conversión BCV.
+                    </p>
+                  </div>
+
+                  <div className="mt-7">
+                    <p className="text-[10px] uppercase tracking-[0.25em] text-white/30">
+                      ¿Qué efectivo llevarás?
+                    </p>
+
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCashCurrency(
+                            "USD"
+                          )
+                        }
+                        onPointerDown={triggerTapFeedback}
+                        className={`min-h-24 touch-manipulation select-none rounded-[22px] border p-4 text-left transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.96] ${
+                          cashCurrency === "USD"
+                            ? "border-[#c5a66d]/70 bg-[#c5a66d]/[0.12]"
+                            : "border-white/10 bg-white/[0.035]"
+                        }`}
+                      >
+                        <p className="text-base font-medium">
+                          Dólares
+                        </p>
+                        <p className="mt-1 text-xs text-white/30">
+                          Efectivo USD
+                        </p>
+                        {cashCurrency ===
+                          "USD" && (
+                          <p className="mt-3 text-xs text-[#c5a66d]">
+                            ✓ Seleccionado
+                          </p>
                         )}
-                      </p>
-                    ) : (
-                      <p className="mt-2 text-lg text-white/40">
-                        Tasa BCV no disponible
-                      </p>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCashCurrency(
+                            "VES"
+                          )
+                        }
+                        onPointerDown={triggerTapFeedback}
+                        className={`min-h-24 touch-manipulation select-none rounded-[22px] border p-4 text-left transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.96] ${
+                          cashCurrency === "VES"
+                            ? "border-[#c5a66d]/70 bg-[#c5a66d]/[0.12]"
+                            : "border-white/10 bg-white/[0.035]"
+                        }`}
+                      >
+                        <p className="text-base font-medium">
+                          Bolívares
+                        </p>
+                        <p className="mt-1 text-xs text-white/30">
+                          Efectivo Bs.
+                        </p>
+                        {cashCurrency ===
+                          "VES" && (
+                          <p className="mt-3 text-xs text-[#c5a66d]">
+                            ✓ Seleccionado
+                          </p>
+                        )}
+                      </button>
+                    </div>
+
+                    {cashCurrency && (
+                      <div className="mt-5 rounded-[22px] border border-white/10 bg-white/[0.035] p-5">
+                        <div className="flex justify-between gap-4 text-sm">
+                          <span className="text-white/30">
+                            Forma de pago
+                          </span>
+                          <span className="text-right">
+                            Efectivo ·{" "}
+                            {cashCurrency ===
+                            "USD"
+                              ? "Dólares"
+                              : "Bolívares"}
+                          </span>
+                        </div>
+
+                        <p className="mt-4 border-t border-white/10 pt-4 text-[10px] leading-4 text-white/30">
+                          Tu horario quedará reservado y el barbero verá que el efectivo está pendiente por cobrar en el local.
+                        </p>
+                      </div>
                     )}
                   </div>
-                </div>
+                </>
+              ) : (
+                <>
+                  <div className="mt-8 rounded-[28px] border border-[#c5a66d]/30 bg-[#c5a66d]/[0.06] p-5">
+                    <div className="flex items-end justify-between gap-4">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.25em] text-[#c5a66d]">
+                          Monto a pagar
+                        </p>
 
-                {bcvRate !==
-                  null && (
-                  <div className="mt-4 border-t border-white/10 pt-4">
-                    <p className="text-[10px] text-white/30">
-                      $
-                      {
-                        selectedService.price
-                      }{" "}
-                      ×{" "}
-                      {formatBcvRate(
-                        bcvRate
-                      )}{" "}
-                      Bs/USD
+                        {amountVes !==
+                          null ? (
+                          <p className="mt-2 text-4xl font-medium">
+                            Bs.{" "}
+                            {formatVes(
+                              amountVes
+                            )}
+                          </p>
+                        ) : (
+                          <p className="mt-2 text-lg text-white/40">
+                            Tasa BCV no disponible
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {bcvRate !==
+                      null && (
+                      <div className="mt-4 border-t border-white/10 pt-4">
+                        <p className="text-[10px] text-white/30">
+                          $
+                          {
+                            selectedService.price
+                          }{" "}
+                          ×{" "}
+                          {formatBcvRate(
+                            bcvRate
+                          )}{" "}
+                          Bs/USD
+                        </p>
+                      </div>
+                    )}
+
+                    {bcvStatus ===
+                      "error" && (
+                      <Button
+                        type="button"
+                        variant="outlined"
+                        fullWidth
+                        onClick={
+                          retryBcvRate
+                        }
+                        onPointerDown={triggerTapFeedback}
+                        sx={{
+                          ...secondaryActionSx,
+                          mt: 2.5,
+                          borderRadius: "12px",
+                        }}
+                      >
+                        Reintentar tasa BCV
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="mt-6 rounded-[26px] border border-white/10 bg-white/[0.035] p-5">
+                    <p className="text-[10px] uppercase tracking-[0.25em] text-[#c5a66d]">
+                      Datos para pagar
+                    </p>
+
+                    {paymentMethod ===
+                    "mobile" ? (
+                      <div className="mt-5 space-y-4 text-sm">
+                        <div className="flex justify-between gap-4">
+                          <span className="text-white/30">
+                            Banco
+                          </span>
+
+                          <span>
+                            Banesco
+                          </span>
+                        </div>
+
+                        <div className="flex justify-between gap-4">
+                          <span className="text-white/30">
+                            Teléfono
+                          </span>
+
+                          <span>
+                            0412-0000000
+                          </span>
+                        </div>
+
+                        <div className="flex justify-between gap-4">
+                          <span className="text-white/30">
+                            Cédula
+                          </span>
+
+                          <span>
+                            V-00.000.000
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-5 space-y-4 text-sm">
+                        <div className="flex justify-between gap-4">
+                          <span className="text-white/30">
+                            Banco
+                          </span>
+
+                          <span>
+                            Banesco
+                          </span>
+                        </div>
+
+                        <div className="flex justify-between gap-4">
+                          <span className="text-white/30">
+                            Cuenta
+                          </span>
+
+                          <span className="text-right">
+                            0134-0000-00-0000000000
+                          </span>
+                        </div>
+
+                        <div className="flex justify-between gap-4">
+                          <span className="text-white/30">
+                            Titular
+                          </span>
+
+                          <span>
+                            WAESTUDIO
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    <p className="mt-5 border-t border-white/10 pt-4 text-[10px] leading-4 text-white/25">
+                      Estos datos bancarios son demostrativos. Luego colocaremos los datos reales de WAESTUDIO.
                     </p>
                   </div>
-                )}
 
-                {bcvStatus ===
-                  "error" && (
-                  <button
-                    type="button"
-                    onClick={
-                      retryBcvRate
-                    }
-                    onPointerDown={triggerTapFeedback}
-                    className="mt-5 min-h-11 w-full touch-manipulation select-none rounded-xl border border-white/10 text-xs text-white/60 transition-all duration-100 ease-out active:translate-y-px active:scale-[0.97] active:border-[#c5a66d]/60 active:bg-[#c5a66d]/10"
-                  >
-                    Reintentar tasa BCV
-                  </button>
-                )}
-              </div>
+                  <div className="mt-7 space-y-5">
+                    <div>
+                      <label className="mb-2 block text-[10px] uppercase tracking-[0.22em] text-white/30">
+                        Banco desde donde pagaste
+                      </label>
 
-              <div className="mt-6 rounded-[26px] border border-white/10 bg-white/[0.035] p-5">
-                <p className="text-[10px] uppercase tracking-[0.25em] text-[#c5a66d]">
-                  Datos para pagar
-                </p>
-
-                {paymentMethod ===
-                "mobile" ? (
-                  <div className="mt-5 space-y-4 text-sm">
-                    <div className="flex justify-between gap-4">
-                      <span className="text-white/30">
-                        Banco
-                      </span>
-
-                      <span>
-                        Banesco
-                      </span>
+                      <TextField
+                        type="text"
+                        value={bank}
+                        onChange={(event) =>
+                          setBank(event.target.value)
+                        }
+                        placeholder="Ej. Mercantil"
+                        fullWidth
+                        sx={textFieldSx}
+                      />
                     </div>
 
-                    <div className="flex justify-between gap-4">
-                      <span className="text-white/30">
-                        Teléfono
-                      </span>
+                    <div>
+                      <label className="mb-2 block text-[10px] uppercase tracking-[0.22em] text-white/30">
+                        Número de referencia
+                      </label>
 
-                      <span>
-                        0412-0000000
-                      </span>
+                      <TextField
+                        type="text"
+                        value={reference}
+                        onChange={(event) =>
+                          setReference(event.target.value)
+                        }
+                        placeholder="Ej. 583926"
+                        fullWidth
+                        slotProps={{
+                          htmlInput: {
+                            inputMode: "numeric",
+                          },
+                        }}
+                        sx={textFieldSx}
+                      />
                     </div>
 
-                    <div className="flex justify-between gap-4">
-                      <span className="text-white/30">
-                        Cédula
-                      </span>
+                    <div>
+                      <p className="mb-2 text-[10px] uppercase tracking-[0.22em] text-white/30">
+                        Comprobante
+                      </p>
 
-                      <span>
-                        V-00.000.000
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-5 space-y-4 text-sm">
-                    <div className="flex justify-between gap-4">
-                      <span className="text-white/30">
-                        Banco
-                      </span>
+                      <label
+                        htmlFor="receipt"
+                        onPointerDown={triggerTapFeedback}
+                        className={`flex min-h-28 w-full touch-manipulation select-none cursor-pointer flex-col items-center justify-center rounded-[22px] border border-dashed px-5 text-center transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.98] ${
+                          receipt
+                            ? "border-[#c5a66d]/60 bg-[#c5a66d]/[0.06]"
+                            : "border-white/15 bg-white/[0.025]"
+                        }`}
+                      >
+                        {receipt ? (
+                          <>
+                            <span className="text-xl text-[#c5a66d]">
+                              ✓
+                            </span>
 
-                      <span>
-                        Banesco
-                      </span>
-                    </div>
+                            <span className="mt-2 max-w-full truncate text-xs text-white/70">
+                              {
+                                receipt.name
+                              }
+                            </span>
 
-                    <div className="flex justify-between gap-4">
-                      <span className="text-white/30">
-                        Cuenta
-                      </span>
+                            <span className="mt-1 text-[10px] text-white/30">
+                              Toca para cambiar
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-2xl text-white/40">
+                              +
+                            </span>
 
-                      <span className="text-right">
-                        0134-0000-00-0000000000
-                      </span>
-                    </div>
+                            <span className="mt-2 text-xs text-white/60">
+                              Subir captura del pago
+                            </span>
 
-                    <div className="flex justify-between gap-4">
-                      <span className="text-white/30">
-                        Titular
-                      </span>
+                            <span className="mt-1 text-[10px] text-white/25">
+                              Selecciona una imagen desde tu teléfono
+                            </span>
+                          </>
+                        )}
 
-                      <span>
-                        WAESTUDIO
-                      </span>
-                    </div>
-                  </div>
-                )}
-
-                <p className="mt-5 border-t border-white/10 pt-4 text-[10px] leading-4 text-white/25">
-                  Estos datos bancarios son demostrativos. Luego colocaremos los datos reales de WAESTUDIO.
-                </p>
-              </div>
-
-              <div className="mt-7 space-y-5">
-                <div>
-                  <label className="mb-2 block text-[10px] uppercase tracking-[0.22em] text-white/30">
-                    Banco desde donde pagaste
-                  </label>
-
-                  <input
-                    type="text"
-                    value={bank}
-                    onChange={(
-                      event
-                    ) =>
-                      setBank(
-                        event
-                          .target
-                          .value
-                      )
-                    }
-                    placeholder="Ej. Mercantil"
-                    className="min-h-14 w-full rounded-2xl border border-white/10 bg-white/[0.035] px-4 text-[15px] text-white outline-none placeholder:text-white/20 focus:border-[#c5a66d]/60"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-2 block text-[10px] uppercase tracking-[0.22em] text-white/30">
-                    Número de referencia
-                  </label>
-
-                  <input
-                    type="text"
-                    value={reference}
-                    onChange={(
-                      event
-                    ) =>
-                      setReference(
-                        event
-                          .target
-                          .value
-                      )
-                    }
-                    placeholder="Ej. 583926"
-                    inputMode="numeric"
-                    className="min-h-14 w-full rounded-2xl border border-white/10 bg-white/[0.035] px-4 text-[15px] text-white outline-none placeholder:text-white/20 focus:border-[#c5a66d]/60"
-                  />
-                </div>
-
-                <div>
-                  <p className="mb-2 text-[10px] uppercase tracking-[0.22em] text-white/30">
-                    Comprobante
-                  </p>
-
-                  <label
-                    htmlFor="receipt"
-                    onPointerDown={triggerTapFeedback}
-                    className={`flex min-h-28 w-full touch-manipulation select-none cursor-pointer flex-col items-center justify-center rounded-[22px] border border-dashed px-5 text-center transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.98] ${
-                      receipt
-                        ? "border-[#c5a66d]/60 bg-[#c5a66d]/[0.06]"
-                        : "border-white/15 bg-white/[0.025]"
-                    }`}
-                  >
-                    {receipt ? (
-                      <>
-                        <span className="text-xl text-[#c5a66d]">
-                          ✓
-                        </span>
-
-                        <span className="mt-2 max-w-full truncate text-xs text-white/70">
-                          {
-                            receipt.name
+                        <input
+                          id="receipt"
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          onChange={
+                            handleReceipt
                           }
-                        </span>
-
-                        <span className="mt-1 text-[10px] text-white/30">
-                          Toca para cambiar
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="text-2xl text-white/40">
-                          +
-                        </span>
-
-                        <span className="mt-2 text-xs text-white/60">
-                          Subir captura del pago
-                        </span>
-
-                        <span className="mt-1 text-[10px] text-white/25">
-                          Selecciona una imagen desde tu teléfono
-                        </span>
-                      </>
-                    )}
-
-                    <input
-                      id="receipt"
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      onChange={
-                        handleReceipt
-                      }
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-              </div>
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </>
+              )}
 
               <div className="mt-8">
-                <button
+                <Button
                   type="button"
+                  variant="contained"
+                  fullWidth
+                  disableRipple
                   disabled={
                     !validPayment ||
                     paymentSubmitting
@@ -2300,30 +2610,52 @@ export default function Home() {
                     reportPayment
                   }
                   onPointerDown={triggerTapFeedback}
-                  className={`min-h-14 w-full touch-manipulation select-none rounded-full px-6 text-sm font-semibold transition-all duration-100 ease-out ${
-                    validPayment &&
-                    !paymentSubmitting
-                      ? "bg-[#f5f1e8] text-[#090909] active:translate-y-[2px] active:scale-[0.96] active:bg-[#ddd7cb] active:shadow-[inset_0_3px_10px_rgba(0,0,0,0.28)]"
-                      : "cursor-not-allowed bg-white/10 text-white/25"
-                  }`}
+                  startIcon={
+                    paymentSubmitting ? (
+                      <CircularProgress
+                        size={16}
+                        thickness={5}
+                        sx={{
+                          color: "rgba(9, 9, 9, 0.55)",
+                        }}
+                      />
+                    ) : undefined
+                  }
+                  sx={primaryActionSx}
                 >
                   {paymentSubmitting
                     ? "Registrando reserva..."
-                    : "Reportar pago"}
-                </button>
+                    : paymentMethod ===
+                        "cash"
+                      ? "Reservar cita"
+                      : "Reportar pago"}
+                </Button>
 
                 {paymentError && (
-                  <p className="mt-3 rounded-xl border border-red-400/20 bg-red-400/[0.06] px-4 py-3 text-center text-[11px] leading-5 text-red-200/80">
+                  <Alert
+                    severity="error"
+                    variant="outlined"
+                    sx={{
+                      mt: 1.5,
+                      borderRadius: "12px",
+                      borderColor: "rgba(248, 113, 113, 0.20)",
+                      backgroundColor: "rgba(248, 113, 113, 0.06)",
+                      color: "rgba(254, 202, 202, 0.82)",
+                      fontSize: 11,
+                    }}
+                  >
                     {paymentError}
-                  </p>
+                  </Alert>
                 )}
 
-                {bcvRate ===
-                  null && (
-                  <p className="mt-3 text-center text-[10px] text-white/25">
-                    Necesitamos obtener la tasa BCV antes de reportar el pago.
-                  </p>
-                )}
+                {paymentMethod !==
+                  "cash" &&
+                  bcvRate ===
+                    null && (
+                    <p className="mt-3 text-center text-[10px] text-white/25">
+                      Necesitamos obtener la tasa BCV antes de reportar el pago.
+                    </p>
+                  )}
               </div>
             </section>
           )}
@@ -2340,19 +2672,31 @@ export default function Home() {
                 </div>
 
                 <p className="mt-8 text-[10px] uppercase tracking-[0.35em] text-[#c5a66d]">
-                  Pago reportado
+                  {paymentMethod === "cash"
+                    ? "Cita reservada"
+                    : "Pago reportado"}
                 </p>
 
                 <h2 className="mt-4 text-4xl font-medium tracking-[-0.04em]">
-                  Recibimos
+                  {paymentMethod === "cash"
+                    ? "Tu cita"
+                    : "Recibimos"}
                   <br />
                   <span className="text-white/30">
-                    tu solicitud.
+                    {paymentMethod === "cash"
+                      ? "quedó reservada."
+                      : "tu solicitud."}
                   </span>
                 </h2>
 
                 <p className="mt-5 text-sm leading-6 text-white/40">
-                  WAESTUDIO revisará el comprobante antes de confirmar definitivamente tu cita.
+                  {paymentMethod === "cash"
+                    ? `Paga en efectivo al llegar a WAESTUDIO. El barbero verá que llevarás ${
+                        cashCurrency === "USD"
+                          ? "dólares"
+                          : "bolívares"
+                      } en efectivo.`
+                    : "WAESTUDIO revisará el comprobante antes de confirmar definitivamente tu cita."}
                 </p>
 
                 {bookingCode && (
@@ -2416,6 +2760,24 @@ export default function Home() {
 
                     <div className="flex justify-between gap-4">
                       <span className="text-white/30">
+                        Pago
+                      </span>
+
+                      <span className="text-right">
+                        {paymentMethod === "cash"
+                          ? `Efectivo · ${
+                              cashCurrency === "USD"
+                                ? "Dólares"
+                                : "Bolívares"
+                            }`
+                          : paymentMethod === "mobile"
+                            ? "Pago Móvil"
+                            : "Transferencia"}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between gap-4">
+                      <span className="text-white/30">
                         Total
                       </span>
 
@@ -2425,17 +2787,36 @@ export default function Home() {
                           {
                             selectedService.price
                           }
+                          {paymentMethod ===
+                            "cash" &&
+                            cashCurrency ===
+                              "VES" && (
+                              <span className="ml-1 text-[10px] font-normal text-white/30">
+                                referencia
+                              </span>
+                            )}
                         </p>
 
-                        {amountVes !==
-                          null && (
-                          <p className="mt-1 text-[10px] text-white/30">
-                            Bs.{" "}
-                            {formatVes(
-                              amountVes
-                            )}
-                          </p>
-                        )}
+                        {paymentMethod !==
+                          "cash" &&
+                          amountVes !==
+                            null && (
+                            <p className="mt-1 text-[10px] text-white/30">
+                              Bs.{" "}
+                              {formatVes(
+                                amountVes
+                              )}
+                            </p>
+                          )}
+
+                        {paymentMethod ===
+                          "cash" &&
+                          cashCurrency ===
+                            "VES" && (
+                            <p className="mt-1 text-[10px] text-white/30">
+                              Efectivo en bolívares · sin conversión BCV en la app
+                            </p>
+                          )}
                       </div>
                     </div>
 
@@ -2444,24 +2825,29 @@ export default function Home() {
                         Estado
                       </span>
 
-                      <span className="text-[#c5a66d]">
-                        Pago por verificar
+                      <span className="text-right text-[#c5a66d]">
+                        {paymentMethod === "cash"
+                          ? "Efectivo por cobrar en el local"
+                          : "Pago por verificar"}
                       </span>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <button
+              <Button
                 type="button"
+                variant="contained"
+                fullWidth
+                disableRipple
                 onClick={
                   startNewBooking
                 }
                 onPointerDown={triggerTapFeedback}
-                className="min-h-14 w-full touch-manipulation select-none rounded-full bg-[#f5f1e8] px-6 text-sm font-semibold text-[#090909] transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.96] active:bg-[#ddd7cb] active:shadow-[inset_0_3px_10px_rgba(0,0,0,0.28)]"
+                sx={primaryActionSx}
               >
                 Volver al inicio
-              </button>
+              </Button>
             </section>
           )}
       </div>
