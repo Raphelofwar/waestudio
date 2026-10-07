@@ -14,6 +14,7 @@ import IconButton from "@mui/material/IconButton";
 import Skeleton from "@mui/material/Skeleton";
 import TextField from "@mui/material/TextField";
 import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
+import SocialFooter from "./SocialFooter";
 
 type Step =
   | "home"
@@ -1647,6 +1648,10 @@ export default function Home() {
                   Los horarios mostrados se consultan en tiempo real.
                 </p>
               </div>
+            </div>
+
+            <div className="-mx-5 mt-2">
+              <SocialFooter />
             </div>
 
             <footer className="flex items-center justify-between border-t border-white/10 pt-5 text-[10px] text-white/25">
