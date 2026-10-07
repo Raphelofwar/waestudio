@@ -1,4 +1,7 @@
-import { createHash, randomBytes } from "crypto";
+import {
+  createHash,
+  randomBytes,
+} from "crypto";
 import { google } from "googleapis";
 import { NextResponse } from "next/server";
 
@@ -16,6 +19,26 @@ const BUSINESS_OPEN_MINUTES =
 
 const BUSINESS_CLOSE_MINUTES =
   18 * 60;
+
+/*
+ * Cada reserva adquiere candados temporales
+ * de 15 minutos mientras se crea la cita.
+ *
+ * Esto evita que dos clientes que confirman
+ * casi al mismo tiempo puedan crear citas
+ * que se solapen.
+ */
+const LOCK_BUCKET_MINUTES = 15;
+
+/*
+ * Si un proceso se interrumpe inesperadamente,
+ * un candado puede quedar en Calendar.
+ *
+ * Después de 2 minutos se considera vencido
+ * y otra solicitud puede recuperarlo.
+ */
+const LOCK_TTL_MS =
+  2 * 60 * 1000;
 
 const ALLOWED_SLOTS = new Set([
   "09:00",
@@ -38,6 +61,7 @@ const SERVICES = {
     priceUsd: 7,
     durationMinutes: 45,
   },
+
   premium: {
     code: "premium",
     name: "Experiencia Premium",
@@ -48,6 +72,12 @@ const SERVICES = {
 
 type ServiceCode =
   keyof typeof SERVICES;
+
+type CalendarLock = {
+  eventId: string;
+  startsAt: Date;
+  endsAt: Date;
+};
 
 function getText(
   formData: FormData,
@@ -123,6 +153,7 @@ function createGoogleOAuthClient() {
 function createCalendarClient() {
   return google.calendar({
     version: "v3",
+
     auth:
       createGoogleOAuthClient(),
   });
@@ -146,9 +177,9 @@ function createCalendarEventId(
   bookingCode: string
 ) {
   /*
-   * Google Calendar admite IDs personalizados.
-   * Usamos SHA-256 y solo caracteres hexadecimales
-   * para mantener un identificador compatible.
+   * Los caracteres hexadecimales utilizados
+   * por SHA-256 son compatibles con IDs
+   * personalizados de Calendar.
    */
   return createHash("sha256")
     .update(
@@ -156,6 +187,110 @@ function createCalendarEventId(
     )
     .digest("hex")
     .slice(0, 40);
+}
+
+function createLockEventId(
+  bucketStart: Date
+) {
+  /*
+   * El ID depende únicamente del intervalo.
+   *
+   * Dos solicitudes que intenten ocupar
+   * el mismo bloque de 15 minutos tratarán
+   * de crear exactamente el mismo eventId.
+   * Google Calendar permitirá solo uno.
+   */
+  return createHash("sha256")
+    .update(
+      `waestudio-lock-${bucketStart.toISOString()}`
+    )
+    .digest("hex")
+    .slice(0, 40);
+}
+
+function getGoogleHttpStatus(
+  error: unknown
+) {
+  if (
+    typeof error !== "object" ||
+    error === null
+  ) {
+    return null;
+  }
+
+  const candidate =
+    error as {
+      code?: number | string;
+
+      response?: {
+        status?: number;
+      };
+    };
+
+  if (
+    typeof candidate.response
+      ?.status === "number"
+  ) {
+    return candidate.response.status;
+  }
+
+  const numericCode =
+    Number(candidate.code);
+
+  return Number.isFinite(
+    numericCode
+  )
+    ? numericCode
+    : null;
+}
+
+function buildLockBuckets(
+  startsAt: Date,
+  endsAt: Date
+): CalendarLock[] {
+  const bucketMs =
+    LOCK_BUCKET_MINUTES *
+    60 *
+    1000;
+
+  const locks:
+    CalendarLock[] = [];
+
+  for (
+    let cursor =
+      startsAt.getTime();
+
+    cursor <
+    endsAt.getTime();
+
+    cursor += bucketMs
+  ) {
+    const bucketStart =
+      new Date(cursor);
+
+    const bucketEnd =
+      new Date(
+        Math.min(
+          cursor + bucketMs,
+          endsAt.getTime()
+        )
+      );
+
+    locks.push({
+      eventId:
+        createLockEventId(
+          bucketStart
+        ),
+
+      startsAt:
+        bucketStart,
+
+      endsAt:
+        bucketEnd,
+    });
+  }
+
+  return locks;
 }
 
 async function isGoogleCalendarBusy(
@@ -199,7 +334,9 @@ async function isGoogleCalendarBusy(
         calendarData.errors || []
     );
 
-  if (errors.length > 0) {
+  if (
+    errors.length > 0
+  ) {
     console.error(
       "Google Calendar freebusy errors:",
       errors
@@ -215,6 +352,276 @@ async function isGoogleCalendarBusy(
       (calendarData.busy || [])
         .length > 0
   );
+}
+
+async function insertLockEvent(
+  lock: CalendarLock
+) {
+  const calendar =
+    createCalendarClient();
+
+  const calendarId =
+    getCalendarId();
+
+  const expiresAt =
+    Date.now() +
+    LOCK_TTL_MS;
+
+  const insert = async () => {
+    await calendar.events.insert({
+      calendarId,
+
+      requestBody: {
+        id:
+          lock.eventId,
+
+        summary:
+          "WAESTUDIO · Reserva en proceso",
+
+        /*
+         * Transparent significa que este
+         * evento temporal NO bloquea FreeBusy.
+         *
+         * El bloqueo real entre solicitudes
+         * se obtiene mediante su eventId único.
+         */
+        transparency:
+          "transparent",
+
+        visibility:
+          "private",
+
+        start: {
+          dateTime:
+            lock.startsAt.toISOString(),
+
+          timeZone:
+            GOOGLE_TIME_ZONE,
+        },
+
+        end: {
+          dateTime:
+            lock.endsAt.toISOString(),
+
+          timeZone:
+            GOOGLE_TIME_ZONE,
+        },
+
+        reminders: {
+          useDefault: false,
+        },
+
+        extendedProperties: {
+          private: {
+            waestudioLock:
+              "true",
+
+            waestudioLockExpiresAt:
+              String(
+                expiresAt
+              ),
+          },
+        },
+      },
+    });
+  };
+
+  try {
+    await insert();
+
+    return true;
+  } catch (error) {
+    /*
+     * 409 significa que ya existe un evento
+     * con ese mismo ID: otro proceso posee
+     * el candado o quedó uno antiguo.
+     */
+    if (
+      getGoogleHttpStatus(
+        error
+      ) !== 409
+    ) {
+      throw error;
+    }
+  }
+
+  /*
+   * Si existe un candado viejo por un proceso
+   * que se interrumpió, lo recuperamos.
+   */
+  try {
+    const existing =
+      await calendar.events.get({
+        calendarId,
+
+        eventId:
+          lock.eventId,
+      });
+
+    const privateData =
+      existing.data
+        .extendedProperties
+        ?.private;
+
+    const isWaestudioLock =
+      privateData
+        ?.waestudioLock ===
+      "true";
+
+    const existingExpiresAt =
+      Number(
+        privateData
+          ?.waestudioLockExpiresAt
+      );
+
+    const isExpired =
+      isWaestudioLock &&
+      Number.isFinite(
+        existingExpiresAt
+      ) &&
+      existingExpiresAt <
+        Date.now();
+
+    if (!isExpired) {
+      return false;
+    }
+
+    await calendar.events.delete({
+      calendarId,
+
+      eventId:
+        lock.eventId,
+    });
+
+    /*
+     * Tras borrar un lock vencido intentamos
+     * adquirirlo una sola vez más.
+     */
+    try {
+      await insert();
+
+      return true;
+    } catch (retryError) {
+      if (
+        getGoogleHttpStatus(
+          retryError
+        ) === 409
+      ) {
+        return false;
+      }
+
+      throw retryError;
+    }
+  } catch (error) {
+    /*
+     * Si otro proceso modificó/eliminó el evento
+     * durante esta comprobación, tratamos el
+     * candado como no adquirido.
+     */
+    if (
+      getGoogleHttpStatus(
+        error
+      ) === 404
+    ) {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+async function releaseCalendarLocks(
+  locks: CalendarLock[]
+) {
+  if (
+    locks.length === 0
+  ) {
+    return;
+  }
+
+  const calendar =
+    createCalendarClient();
+
+  const calendarId =
+    getCalendarId();
+
+  await Promise.allSettled(
+    locks.map(
+      async (lock) => {
+        try {
+          await calendar.events.delete({
+            calendarId,
+
+            eventId:
+              lock.eventId,
+          });
+        } catch (error) {
+          /*
+           * 404 es inofensivo:
+           * el lock ya no existe.
+           */
+          if (
+            getGoogleHttpStatus(
+              error
+            ) !== 404
+          ) {
+            console.error(
+              "No se pudo eliminar un lock temporal de Calendar:",
+              error
+            );
+          }
+        }
+      }
+    )
+  );
+}
+
+async function acquireCalendarLocks(
+  startsAt: Date,
+  endsAt: Date
+) {
+  const requiredLocks =
+    buildLockBuckets(
+      startsAt,
+      endsAt
+    );
+
+  const acquiredLocks:
+    CalendarLock[] = [];
+
+  for (
+    const lock of
+      requiredLocks
+  ) {
+    const acquired =
+      await insertLockEvent(
+        lock
+      );
+
+    if (!acquired) {
+      await releaseCalendarLocks(
+        acquiredLocks
+      );
+
+      return {
+        ok: false as const,
+
+        locks: [] as
+          CalendarLock[],
+      };
+    }
+
+    acquiredLocks.push(
+      lock
+    );
+  }
+
+  return {
+    ok: true as const,
+
+    locks:
+      acquiredLocks,
+  };
 }
 
 async function createGoogleCalendarEvent({
@@ -247,7 +654,8 @@ async function createGoogleCalendarEvent({
         getCalendarId(),
 
       requestBody: {
-        id: eventId,
+        id:
+          eventId,
 
         summary:
           `WAESTUDIO · ${customerName} · ${service.name}`,
@@ -282,6 +690,9 @@ async function createGoogleCalendarEvent({
 
         extendedProperties: {
           private: {
+            waestudioBooking:
+              "true",
+
             waestudioBookingCode:
               bookingCode,
 
@@ -309,6 +720,9 @@ async function createGoogleCalendarEvent({
 export async function POST(
   request: Request
 ) {
+  let acquiredLocks:
+    CalendarLock[] = [];
+
   try {
     const formData =
       await request.formData();
@@ -362,7 +776,8 @@ export async function POST(
      */
 
     if (
-      customerName.length < 2
+      customerName.length <
+      2
     ) {
       return NextResponse.json(
         {
@@ -384,7 +799,8 @@ export async function POST(
       );
 
     if (
-      whatsappDigits.length < 10
+      whatsappDigits.length <
+      10
     ) {
       return NextResponse.json(
         {
@@ -514,7 +930,8 @@ export async function POST(
     }
 
     if (
-      startsAt <= new Date()
+      startsAt <=
+      new Date()
     ) {
       return NextResponse.json(
         {
@@ -598,20 +1015,17 @@ export async function POST(
 
     /*
      * =================================
-     * VALIDACIÓN FINAL EN GOOGLE CALENDAR
+     * PRIMERA COMPROBACIÓN FREE/BUSY
      * =================================
-     *
-     * La disponibilidad se vuelve a consultar
-     * justo antes de crear la cita.
      */
 
-    const isBusy =
+    const initiallyBusy =
       await isGoogleCalendarBusy(
         startsAt,
         endsAt
       );
 
-    if (isBusy) {
+    if (initiallyBusy) {
       return NextResponse.json(
         {
           ok: false,
@@ -630,7 +1044,92 @@ export async function POST(
 
     /*
      * =================================
-     * CREAR CITA EN GOOGLE CALENDAR
+     * CANDADOS TEMPORALES
+     * =================================
+     *
+     * Los candados dividen la duración real
+     * del servicio en bloques de 15 minutos.
+     *
+     * Ejemplo:
+     * 09:00 + Premium (75 min)
+     * bloquea temporalmente:
+     * 09:00
+     * 09:15
+     * 09:30
+     * 09:45
+     * 10:00
+     *
+     * Otra solicitud que se solape deberá
+     * adquirir alguno de esos mismos IDs
+     * y Google Calendar la rechazará.
+     */
+
+    const lockResult =
+      await acquireCalendarLocks(
+        startsAt,
+        endsAt
+      );
+
+    if (!lockResult.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+
+          code:
+            "TIME_NOT_AVAILABLE",
+
+          message:
+            "Otro cliente está confirmando un horario que se cruza con esta cita. Selecciona otro horario o inténtalo nuevamente.",
+        },
+        {
+          status: 409,
+        }
+      );
+    }
+
+    acquiredLocks =
+      lockResult.locks;
+
+    /*
+     * =================================
+     * SEGUNDA COMPROBACIÓN FREE/BUSY
+     * =================================
+     *
+     * Los locks son transparentes y no salen
+     * como BUSY. Por eso podemos volver a
+     * consultar Calendar después de obtenerlos.
+     *
+     * Esto cubre, por ejemplo, que el barbero
+     * haya creado un bloqueo manual justo
+     * durante el proceso de reserva.
+     */
+
+    const busyAfterLock =
+      await isGoogleCalendarBusy(
+        startsAt,
+        endsAt
+      );
+
+    if (busyAfterLock) {
+      return NextResponse.json(
+        {
+          ok: false,
+
+          code:
+            "TIME_NOT_AVAILABLE",
+
+          message:
+            "Ese horario acaba de ser ocupado. Selecciona otro horario.",
+        },
+        {
+          status: 409,
+        }
+      );
+    }
+
+    /*
+     * =================================
+     * CREAR CITA DEFINITIVA
      * =================================
      */
 
@@ -652,18 +1151,9 @@ export async function POST(
         endsAt,
       });
 
-    /*
-     * =================================
-     * RESPUESTA COMPATIBLE CON page.tsx
-     * =================================
-     *
-     * Ya no existe booking en Supabase.
-     * El eventId de Google Calendar pasa a ser
-     * el identificador interno de esta cita.
-     */
-
     const isCash =
-      paymentMethod === "cash";
+      paymentMethod ===
+      "cash";
 
     return NextResponse.json(
       {
@@ -684,11 +1174,13 @@ export async function POST(
           true,
 
         paymentMethod:
-          paymentMethod || null,
+          paymentMethod ||
+          null,
 
         cashCurrency:
           isCash
-            ? cashCurrency || null
+            ? cashCurrency ||
+              null
             : null,
 
         status:
@@ -724,6 +1216,16 @@ export async function POST(
       {
         status: 500,
       }
+    );
+  } finally {
+    /*
+     * Los candados son siempre temporales.
+     *
+     * La cita definitiva ya es un evento
+     * opaque y será la que bloquee FreeBusy.
+     */
+    await releaseCalendarLocks(
+      acquiredLocks
     );
   }
 }
