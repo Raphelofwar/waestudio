@@ -1,8 +1,19 @@
-import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase-server";
+import { google } from "googleapis";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/*
+ * Zona horaria de WAESTUDIO.
+ *
+ * Venezuela utiliza UTC-4 durante todo el año.
+ */
+const GOOGLE_TIME_ZONE = "America/Caracas";
+const VENEZUELA_OFFSET = "-04:00";
 
 /*
  * Horarios que actualmente utiliza la interfaz.
@@ -25,52 +36,134 @@ const CANDIDATE_SLOTS = [
 ];
 
 /*
- * Estados que NO deben bloquear un horario.
+ * Horario fijo de WAESTUDIO.
  *
- * Si posteriormente agregamos nuevos estados de cancelación,
- * podemos incluirlos aquí.
+ * 0 = domingo
+ * 1 = lunes
+ * ...
+ * 6 = sábado
+ *
+ * Ya no se consulta Supabase para obtener el horario.
  */
-const INACTIVE_BOOKING_STATUSES = new Set([
-  "cancelled",
-  "canceled",
-  "cancelada",
-  "rejected",
-  "rechazada",
-]);
-
-type ServiceRow = {
-  id: string;
-  code: string;
-  name: string;
-  duration_minutes: number;
-  active: boolean;
+const BUSINESS_HOURS: Record<
+  number,
+  {
+    isOpen: boolean;
+    openTime: string | null;
+    closeTime: string | null;
+  }
+> = {
+  0: {
+    isOpen: false,
+    openTime: null,
+    closeTime: null,
+  },
+  1: {
+    isOpen: true,
+    openTime: "09:00",
+    closeTime: "18:00",
+  },
+  2: {
+    isOpen: true,
+    openTime: "09:00",
+    closeTime: "18:00",
+  },
+  3: {
+    isOpen: true,
+    openTime: "09:00",
+    closeTime: "18:00",
+  },
+  4: {
+    isOpen: true,
+    openTime: "09:00",
+    closeTime: "18:00",
+  },
+  5: {
+    isOpen: true,
+    openTime: "09:00",
+    closeTime: "18:00",
+  },
+  6: {
+    isOpen: true,
+    openTime: "09:00",
+    closeTime: "18:00",
+  },
 };
 
-type BookingRow = {
-  starts_at: string;
-  ends_at: string;
-  status: string;
+/*
+ * Servicios de WAESTUDIO.
+ *
+ * Ya no se consulta Supabase para conocer la duración
+ * de cada servicio.
+ */
+const SERVICES = [
+  {
+    code: "essential",
+    name: "Corte Esencial",
+    durationMinutes: 45,
+  },
+  {
+    code: "premium",
+    name: "Experiencia Premium",
+    durationMinutes: 75,
+  },
+];
+
+type BusyPeriod = {
+  start: string;
+  end: string;
 };
 
-type BlockedPeriodRow = {
-  starts_at: string;
-  ends_at: string;
-  reason: string | null;
-};
+function createGoogleOAuthClient() {
+  const clientId =
+    process.env.GOOGLE_CLIENT_ID;
+
+  const clientSecret =
+    process.env.GOOGLE_CLIENT_SECRET;
+
+  const redirectUri =
+    process.env.GOOGLE_REDIRECT_URI;
+
+  const refreshToken =
+    process.env.GOOGLE_REFRESH_TOKEN;
+
+  if (
+    !clientId ||
+    !clientSecret ||
+    !redirectUri ||
+    !refreshToken
+  ) {
+    throw new Error(
+      "Faltan variables de entorno de Google Calendar."
+    );
+  }
+
+  const oauth2Client =
+    new google.auth.OAuth2(
+      clientId,
+      clientSecret,
+      redirectUri
+    );
+
+  oauth2Client.setCredentials({
+    refresh_token: refreshToken,
+  });
+
+  return oauth2Client;
+}
 
 function isValidDate(value: string) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+  return /^\d{4}-\d{2}-\d{2}$/.test(
+    value
+  );
 }
 
 function localDateTime(
   date: string,
   time: string
 ) {
-  /*
-   * Venezuela utiliza UTC-4.
-   */
   return new Date(
-    `${date}T${time}:00-04:00`
+    `${date}T${time}:00${VENEZUELA_OFFSET}`
   );
 }
 
@@ -133,6 +226,97 @@ function overlaps(
   );
 }
 
+async function getBusyPeriods(
+  date: string
+): Promise<BusyPeriod[]> {
+  const auth =
+    createGoogleOAuthClient();
+
+  const calendar =
+    google.calendar({
+      version: "v3",
+      auth,
+    });
+
+  const calendarId =
+    process.env.GOOGLE_CALENDAR_ID ||
+    "primary";
+
+  const dayStart =
+    new Date(
+      `${date}T00:00:00${VENEZUELA_OFFSET}`
+    );
+
+  const dayEnd =
+    new Date(
+      `${date}T23:59:59.999${VENEZUELA_OFFSET}`
+    );
+
+  const response =
+    await calendar.freebusy.query({
+      requestBody: {
+        timeMin:
+          dayStart.toISOString(),
+
+        timeMax:
+          dayEnd.toISOString(),
+
+        timeZone:
+          GOOGLE_TIME_ZONE,
+
+        items: [
+          {
+            id: calendarId,
+          },
+        ],
+      },
+    });
+
+  const calendars =
+    response.data.calendars || {};
+
+  const calendarResults =
+    Object.values(calendars);
+
+  const calendarErrors =
+    calendarResults.flatMap(
+      (calendarData) =>
+        calendarData.errors || []
+    );
+
+  if (calendarErrors.length > 0) {
+    console.error(
+      "Google Calendar freebusy errors:",
+      calendarErrors
+    );
+
+    throw new Error(
+      "Google Calendar devolvió un error al consultar disponibilidad."
+    );
+  }
+
+  return calendarResults.flatMap(
+    (calendarData) =>
+      (calendarData.busy || [])
+        .filter(
+          (
+            busy
+          ): busy is {
+            start: string;
+            end: string;
+          } =>
+            typeof busy.start ===
+              "string" &&
+            typeof busy.end ===
+              "string"
+        )
+        .map((busy) => ({
+          start: busy.start,
+          end: busy.end,
+        }))
+  );
+}
+
 export async function GET(
   request: NextRequest
 ) {
@@ -163,7 +347,7 @@ export async function GET(
      */
     const dateForWeekday =
       new Date(
-        `${date}T12:00:00-04:00`
+        `${date}T12:00:00${VENEZUELA_OFFSET}`
       );
 
     if (
@@ -188,217 +372,71 @@ export async function GET(
 
     /*
      * HORARIO DEL NEGOCIO
+     *
+     * Ahora se obtiene de configuración local,
+     * no de Supabase.
      */
-
-    const {
-      data: workingHours,
-      error: workingHoursError,
-    } = await supabaseAdmin
-      .from("working_hours")
-      .select(
-        "weekday, is_open, open_time, close_time"
-      )
-      .eq("weekday", weekday)
-      .single();
+    const workingHours =
+      BUSINESS_HOURS[weekday];
 
     if (
-      workingHoursError ||
-      !workingHours
+      !workingHours ||
+      !workingHours.isOpen ||
+      !workingHours.openTime ||
+      !workingHours.closeTime
     ) {
-      console.error(
-        "Error consultando working_hours:",
-        workingHoursError
-      );
-
       return NextResponse.json(
         {
-          ok: false,
-          message:
-            "No fue posible consultar el horario del negocio.",
+          ok: true,
+
+          source:
+            "google-calendar",
+
+          date,
+
+          weekday,
+
+          isOpen: false,
+
+          openTime: null,
+          closeTime: null,
+
+          slots: [],
+
+          busyPeriodsCount: 0,
         },
         {
-          status: 500,
+          headers: {
+            "Cache-Control":
+              "no-store, max-age=0",
+          },
         }
       );
-    }
-
-    /*
-     * DÍA CERRADO
-     */
-
-    if (
-      !workingHours.is_open ||
-      !workingHours.open_time ||
-      !workingHours.close_time
-    ) {
-      return NextResponse.json({
-        ok: true,
-        date,
-        weekday,
-        isOpen: false,
-        openTime: null,
-        closeTime: null,
-        slots: [],
-      });
     }
 
     const openTime =
-      String(
-        workingHours.open_time
-      ).slice(0, 5);
+      workingHours.openTime;
 
     const closeTime =
-      String(
-        workingHours.close_time
-      ).slice(0, 5);
+      workingHours.closeTime;
 
     /*
-     * SERVICIOS ACTIVOS
+     * GOOGLE CALENDAR
+     *
+     * Cualquier intervalo que Google Calendar devuelva
+     * como BUSY se considera ocupado.
+     *
+     * Esto incluye:
+     * - citas creadas automáticamente por WAESTUDIO
+     * - bloqueos manuales creados por el barbero
+     * - otros eventos configurados como "ocupado"
      */
-
-    const {
-      data: servicesData,
-      error: servicesError,
-    } = await supabaseAdmin
-      .from("services")
-      .select(
-        "id, code, name, duration_minutes, active"
-      )
-      .eq("active", true);
-
-    if (servicesError) {
-      console.error(
-        "Error consultando servicios:",
-        servicesError
-      );
-
-      return NextResponse.json(
-        {
-          ok: false,
-          message:
-            "No fue posible consultar los servicios.",
-        },
-        {
-          status: 500,
-        }
-      );
-    }
-
-    const services =
-      (servicesData ||
-        []) as ServiceRow[];
-
-    /*
-     * RANGO COMPLETO DEL DÍA EN VENEZUELA
-     */
-
-    const dayStart =
-      new Date(
-        `${date}T00:00:00-04:00`
-      );
-
-    const dayEnd =
-      new Date(
-        `${date}T23:59:59.999-04:00`
-      );
-
-    /*
-     * RESERVAS EXISTENTES
-     */
-
-    const {
-      data: bookingsData,
-      error: bookingsError,
-    } = await supabaseAdmin
-      .from("bookings")
-      .select(
-        "starts_at, ends_at, status"
-      )
-      .lt(
-        "starts_at",
-        dayEnd.toISOString()
-      )
-      .gt(
-        "ends_at",
-        dayStart.toISOString()
-      );
-
-    if (bookingsError) {
-      console.error(
-        "Error consultando reservas:",
-        bookingsError
-      );
-
-      return NextResponse.json(
-        {
-          ok: false,
-          message:
-            "No fue posible consultar las reservas existentes.",
-        },
-        {
-          status: 500,
-        }
-      );
-    }
-
-    const bookings =
-      (
-        (bookingsData ||
-          []) as BookingRow[]
-      ).filter(
-        (booking) =>
-          !INACTIVE_BOOKING_STATUSES.has(
-            booking.status
-          )
-      );
-
-    /*
-     * BLOQUEOS MANUALES
-     */
-
-    const {
-      data: blockedData,
-      error: blockedError,
-    } = await supabaseAdmin
-      .from("blocked_periods")
-      .select(
-        "starts_at, ends_at, reason"
-      )
-      .lt(
-        "starts_at",
-        dayEnd.toISOString()
-      )
-      .gt(
-        "ends_at",
-        dayStart.toISOString()
-      );
-
-    if (blockedError) {
-      console.error(
-        "Error consultando bloqueos:",
-        blockedError
-      );
-
-      return NextResponse.json(
-        {
-          ok: false,
-          message:
-            "No fue posible consultar los bloqueos de horario.",
-        },
-        {
-          status: 500,
-        }
-      );
-    }
-
-    const blockedPeriods =
-      (blockedData ||
-        []) as BlockedPeriodRow[];
+    const busyPeriods =
+      await getBusyPeriods(date);
 
     /*
      * GENERAR DISPONIBILIDAD
      */
-
     const openMinutes =
       minutesFromTime(openTime);
 
@@ -440,31 +478,30 @@ export async function GET(
           if (slotStart <= now) {
             return {
               time: slotTime,
+
               label:
                 formatTime12Hour(
                   slotTime
                 ),
+
               available: false,
+
               availableServices: [],
+
               reason: "past",
             };
           }
 
           const availableServices =
-            services.filter(
+            SERVICES.filter(
               (service) => {
-                const duration =
-                  Number(
-                    service.duration_minutes
-                  );
-
                 const serviceEndMinutes =
                   slotMinutes +
-                  duration;
+                  service.durationMinutes;
 
                 /*
-                 * El servicio debe terminar antes
-                 * del cierre.
+                 * El servicio debe terminar
+                 * antes del cierre.
                  */
                 if (
                   serviceEndMinutes >
@@ -482,62 +519,35 @@ export async function GET(
                   );
 
                 /*
-                 * Comprobar reservas existentes.
+                 * Comprobar conflictos con Google Calendar.
+                 *
+                 * Si cualquier parte del servicio se superpone
+                 * con un intervalo BUSY, ese servicio no puede
+                 * reservarse en esa hora.
                  */
-                const bookingConflict =
-                  bookings.some(
-                    (booking) => {
-                      const bookingStart =
-                        new Date(
-                          booking.starts_at
-                        );
-
-                      const bookingEnd =
-                        new Date(
-                          booking.ends_at
-                        );
-
-                      return overlaps(
-                        slotStart,
-                        serviceEnd,
-                        bookingStart,
-                        bookingEnd
-                      );
-                    }
-                  );
-
-                if (
-                  bookingConflict
-                ) {
-                  return false;
-                }
-
-                /*
-                 * Comprobar bloqueos manuales.
-                 */
-                const blockedConflict =
-                  blockedPeriods.some(
+                const calendarConflict =
+                  busyPeriods.some(
                     (period) => {
-                      const blockedStart =
+                      const busyStart =
                         new Date(
-                          period.starts_at
+                          period.start
                         );
 
-                      const blockedEnd =
+                      const busyEnd =
                         new Date(
-                          period.ends_at
+                          period.end
                         );
 
                       return overlaps(
                         slotStart,
                         serviceEnd,
-                        blockedStart,
-                        blockedEnd
+                        busyStart,
+                        busyEnd
                       );
                     }
                   );
 
-                return !blockedConflict;
+                return !calendarConflict;
               }
             );
 
@@ -578,6 +588,9 @@ export async function GET(
       {
         ok: true,
 
+        source:
+          "google-calendar",
+
         date,
 
         weekday,
@@ -589,11 +602,8 @@ export async function GET(
 
         slots,
 
-        bookingsCount:
-          bookings.length,
-
-        blockedPeriodsCount:
-          blockedPeriods.length,
+        busyPeriodsCount:
+          busyPeriods.length,
       },
       {
         headers: {
@@ -604,15 +614,16 @@ export async function GET(
     );
   } catch (error) {
     console.error(
-      "Error general consultando disponibilidad:",
+      "Error consultando disponibilidad en Google Calendar:",
       error
     );
 
     return NextResponse.json(
       {
         ok: false,
+
         message:
-          "Ocurrió un error inesperado al consultar la disponibilidad.",
+          "No fue posible consultar la disponibilidad en Google Calendar.",
       },
       {
         status: 500,

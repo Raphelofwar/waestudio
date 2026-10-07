@@ -1,203 +1,375 @@
+import { createHash, randomBytes } from "crypto";
+import { google } from "googleapis";
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_RECEIPT_SIZE = 5 * 1024 * 1024;
+const GOOGLE_TIME_ZONE =
+  "America/Caracas";
 
-const ALLOWED_RECEIPT_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-];
+const VENEZUELA_OFFSET =
+  "-04:00";
 
-function getText(formData: FormData, key: string) {
-  const value = formData.get(key);
+const BUSINESS_OPEN_MINUTES =
+  9 * 60;
 
-  if (typeof value !== "string") {
+const BUSINESS_CLOSE_MINUTES =
+  18 * 60;
+
+const ALLOWED_SLOTS = new Set([
+  "09:00",
+  "09:45",
+  "10:00",
+  "10:30",
+  "11:15",
+  "11:30",
+  "14:00",
+  "14:45",
+  "15:30",
+  "16:15",
+  "17:00",
+]);
+
+const SERVICES = {
+  essential: {
+    code: "essential",
+    name: "Corte Esencial",
+    priceUsd: 7,
+    durationMinutes: 45,
+  },
+  premium: {
+    code: "premium",
+    name: "Experiencia Premium",
+    priceUsd: 10,
+    durationMinutes: 75,
+  },
+} as const;
+
+type ServiceCode =
+  keyof typeof SERVICES;
+
+function getText(
+  formData: FormData,
+  key: string
+) {
+  const value =
+    formData.get(key);
+
+  if (
+    typeof value !== "string"
+  ) {
     return "";
   }
 
   return value.trim();
 }
 
-function cleanFilename(filename: string) {
-  return filename
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9._-]/g, "-")
-    .toLowerCase();
+function minutesFromTime(
+  time: string
+) {
+  const [hours, minutes] =
+    time
+      .split(":")
+      .map(Number);
+
+  return (
+    hours * 60 +
+    minutes
+  );
 }
 
-export async function POST(request: Request) {
-  let bookingId: string | null = null;
-  let receiptPath: string | null = null;
+function createGoogleOAuthClient() {
+  const clientId =
+    process.env.GOOGLE_CLIENT_ID;
 
+  const clientSecret =
+    process.env
+      .GOOGLE_CLIENT_SECRET;
+
+  const redirectUri =
+    process.env.GOOGLE_REDIRECT_URI;
+
+  const refreshToken =
+    process.env
+      .GOOGLE_REFRESH_TOKEN;
+
+  if (
+    !clientId ||
+    !clientSecret ||
+    !redirectUri ||
+    !refreshToken
+  ) {
+    throw new Error(
+      "Faltan variables de entorno de Google Calendar."
+    );
+  }
+
+  const oauth2Client =
+    new google.auth.OAuth2(
+      clientId,
+      clientSecret,
+      redirectUri
+    );
+
+  oauth2Client.setCredentials({
+    refresh_token:
+      refreshToken,
+  });
+
+  return oauth2Client;
+}
+
+function createCalendarClient() {
+  return google.calendar({
+    version: "v3",
+    auth:
+      createGoogleOAuthClient(),
+  });
+}
+
+function getCalendarId() {
+  return (
+    process.env
+      .GOOGLE_CALENDAR_ID ||
+    "primary"
+  );
+}
+
+function createBookingCode() {
+  return `WAE-${randomBytes(3)
+    .toString("hex")
+    .toUpperCase()}`;
+}
+
+function createCalendarEventId(
+  bookingCode: string
+) {
+  /*
+   * Google Calendar admite IDs personalizados.
+   * Usamos SHA-256 y solo caracteres hexadecimales
+   * para mantener un identificador compatible.
+   */
+  return createHash("sha256")
+    .update(
+      `waestudio-${bookingCode}`
+    )
+    .digest("hex")
+    .slice(0, 40);
+}
+
+async function isGoogleCalendarBusy(
+  startsAt: Date,
+  endsAt: Date
+) {
+  const calendar =
+    createCalendarClient();
+
+  const response =
+    await calendar.freebusy.query({
+      requestBody: {
+        timeMin:
+          startsAt.toISOString(),
+
+        timeMax:
+          endsAt.toISOString(),
+
+        timeZone:
+          GOOGLE_TIME_ZONE,
+
+        items: [
+          {
+            id:
+              getCalendarId(),
+          },
+        ],
+      },
+    });
+
+  const calendars =
+    response.data.calendars ||
+    {};
+
+  const results =
+    Object.values(calendars);
+
+  const errors =
+    results.flatMap(
+      (calendarData) =>
+        calendarData.errors || []
+    );
+
+  if (errors.length > 0) {
+    console.error(
+      "Google Calendar freebusy errors:",
+      errors
+    );
+
+    throw new Error(
+      "Google Calendar devolvió un error consultando disponibilidad."
+    );
+  }
+
+  return results.some(
+    (calendarData) =>
+      (calendarData.busy || [])
+        .length > 0
+  );
+}
+
+async function createGoogleCalendarEvent({
+  bookingCode,
+  customerName,
+  customerWhatsapp,
+  service,
+  startsAt,
+  endsAt,
+}: {
+  bookingCode: string;
+  customerName: string;
+  customerWhatsapp: string;
+  service:
+    (typeof SERVICES)[ServiceCode];
+  startsAt: Date;
+  endsAt: Date;
+}) {
+  const calendar =
+    createCalendarClient();
+
+  const eventId =
+    createCalendarEventId(
+      bookingCode
+    );
+
+  const response =
+    await calendar.events.insert({
+      calendarId:
+        getCalendarId(),
+
+      requestBody: {
+        id: eventId,
+
+        summary:
+          `WAESTUDIO · ${customerName} · ${service.name}`,
+
+        description: [
+          `Cliente: ${customerName}`,
+          `WhatsApp: ${customerWhatsapp}`,
+          `Servicio: ${service.name}`,
+          `Código de cita: ${bookingCode}`,
+          "",
+          "Reserva creada automáticamente por WAESTUDIO.",
+        ].join("\n"),
+
+        start: {
+          dateTime:
+            startsAt.toISOString(),
+
+          timeZone:
+            GOOGLE_TIME_ZONE,
+        },
+
+        end: {
+          dateTime:
+            endsAt.toISOString(),
+
+          timeZone:
+            GOOGLE_TIME_ZONE,
+        },
+
+        transparency:
+          "opaque",
+
+        extendedProperties: {
+          private: {
+            waestudioBookingCode:
+              bookingCode,
+
+            waestudioServiceCode:
+              service.code,
+
+            waestudioCustomerWhatsapp:
+              customerWhatsapp,
+          },
+        },
+      },
+    });
+
+  return {
+    eventId:
+      response.data.id ||
+      eventId,
+
+    htmlLink:
+      response.data.htmlLink ||
+      null,
+  };
+}
+
+export async function POST(
+  request: Request
+) {
   try {
-    const formData = await request.formData();
+    const formData =
+      await request.formData();
 
-    const customerName = getText(formData, "customerName");
-    const customerWhatsapp = getText(
-      formData,
-      "customerWhatsapp"
-    );
+    const customerName =
+      getText(
+        formData,
+        "customerName"
+      );
 
-    const serviceCode = getText(formData, "serviceCode");
-    const date = getText(formData, "date");
-    const time = getText(formData, "time");
+    const customerWhatsapp =
+      getText(
+        formData,
+        "customerWhatsapp"
+      );
 
-    const paymentMethod = getText(
-      formData,
-      "paymentMethod"
-    );
+    const serviceCode =
+      getText(
+        formData,
+        "serviceCode"
+      );
 
-    const payerBank = getText(formData, "payerBank");
-    const reference = getText(formData, "reference");
+    const date =
+      getText(
+        formData,
+        "date"
+      );
 
-    const bcvRateText = getText(formData, "bcvRate");
-    const bcvRate = Number(bcvRateText);
+    const time =
+      getText(
+        formData,
+        "time"
+      );
 
-    const receipt = formData.get("receipt");
+    const paymentMethod =
+      getText(
+        formData,
+        "paymentMethod"
+      );
+
+    const cashCurrency =
+      getText(
+        formData,
+        "cashCurrency"
+      ).toUpperCase();
 
     /*
-     * VALIDACIONES
+     * =================================
+     * VALIDACIONES DEL CLIENTE
+     * =================================
      */
 
-    if (customerName.length < 2) {
-      return NextResponse.json(
-        {
-          ok: false,
-          message: "El nombre del cliente no es válido.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    const whatsappDigits = customerWhatsapp.replace(
-      /\D/g,
-      ""
-    );
-
-    if (whatsappDigits.length < 10) {
-      return NextResponse.json(
-        {
-          ok: false,
-          message: "El número de WhatsApp no es válido.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    if (!serviceCode) {
-      return NextResponse.json(
-        {
-          ok: false,
-          message: "Debes seleccionar un servicio.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      return NextResponse.json(
-        {
-          ok: false,
-          message: "La fecha no es válida.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    if (!/^\d{2}:\d{2}$/.test(time)) {
-      return NextResponse.json(
-        {
-          ok: false,
-          message: "La hora no es válida.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
     if (
-      paymentMethod !== "mobile" &&
-      paymentMethod !== "transfer"
+      customerName.length < 2
     ) {
       return NextResponse.json(
         {
           ok: false,
-          message: "El método de pago no es válido.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
 
-    if (payerBank.length < 2) {
-      return NextResponse.json(
-        {
-          ok: false,
-          message: "Debes indicar el banco.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    if (reference.length < 4) {
-      return NextResponse.json(
-        {
-          ok: false,
-          message: "La referencia de pago no es válida.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    if (!Number.isFinite(bcvRate) || bcvRate <= 0) {
-      return NextResponse.json(
-        {
-          ok: false,
-          message: "La tasa BCV no es válida.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    if (!(receipt instanceof File)) {
-      return NextResponse.json(
-        {
-          ok: false,
-          message: "Debes adjuntar el comprobante.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    if (receipt.size > MAX_RECEIPT_SIZE) {
-      return NextResponse.json(
-        {
-          ok: false,
           message:
-            "El comprobante no puede superar los 5 MB.",
+            "El nombre del cliente no es válido.",
         },
         {
           status: 400,
@@ -205,12 +377,21 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!ALLOWED_RECEIPT_TYPES.includes(receipt.type)) {
+    const whatsappDigits =
+      customerWhatsapp.replace(
+        /\D/g,
+        ""
+      );
+
+    if (
+      whatsappDigits.length < 10
+    ) {
       return NextResponse.json(
         {
           ok: false,
+
           message:
-            "El comprobante debe ser JPG, PNG o WEBP.",
+            "El número de WhatsApp no es válido.",
         },
         {
           status: 400,
@@ -219,30 +400,21 @@ export async function POST(request: Request) {
     }
 
     /*
-     * OBTENER SERVICIO REAL DESDE SUPABASE
+     * =================================
+     * SERVICIO
+     * =================================
      */
 
-    const {
-      data: service,
-      error: serviceError,
-    } = await supabaseAdmin
-      .from("services")
-      .select(
-        "id, code, name, price_usd, duration_minutes, active"
+    if (
+      !(
+        serviceCode in
+        SERVICES
       )
-      .eq("code", serviceCode)
-      .eq("active", true)
-      .single();
-
-    if (serviceError || !service) {
-      console.error(
-        "Error buscando servicio:",
-        serviceError
-      );
-
+    ) {
       return NextResponse.json(
         {
           ok: false,
+
           message:
             "El servicio seleccionado no está disponible.",
         },
@@ -252,25 +424,29 @@ export async function POST(request: Request) {
       );
     }
 
-    const priceUsd = Number(service.price_usd);
-
-    const priceVes = Number(
-      (priceUsd * bcvRate).toFixed(2)
-    );
+    const service =
+      SERVICES[
+        serviceCode as
+          ServiceCode
+      ];
 
     /*
-     * HORARIO DE VENEZUELA UTC-4
+     * =================================
+     * FECHA Y HORA
+     * =================================
      */
 
-    const startsAt = new Date(
-      `${date}T${time}:00-04:00`
-    );
-
-    if (Number.isNaN(startsAt.getTime())) {
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(
+        date
+      )
+    ) {
       return NextResponse.json(
         {
           ok: false,
-          message: "La fecha de la reserva no es válida.",
+
+          message:
+            "La fecha no es válida.",
         },
         {
           status: 400,
@@ -278,204 +454,272 @@ export async function POST(request: Request) {
       );
     }
 
-    const endsAt = new Date(
-      startsAt.getTime() +
-        Number(service.duration_minutes) * 60 * 1000
-    );
-
-    /*
-     * CREAR RESERVA
-     */
-
-    const {
-      data: booking,
-      error: bookingError,
-    } = await supabaseAdmin
-      .from("bookings")
-      .insert({
-        customer_name: customerName,
-        customer_whatsapp: customerWhatsapp,
-
-        service_id: service.id,
-        service_name: service.name,
-        service_price_usd: priceUsd,
-        service_duration_minutes:
-          service.duration_minutes,
-
-        bcv_rate: bcvRate,
-        service_price_ves: priceVes,
-
-        starts_at: startsAt.toISOString(),
-        ends_at: endsAt.toISOString(),
-      })
-      .select("id, booking_code")
-      .single();
-
-    if (bookingError || !booking) {
-      console.error(
-        "Error creando reserva:",
-        bookingError
-      );
-
-      if (bookingError?.code === "23P01") {
-        return NextResponse.json(
-          {
-            ok: false,
-            code: "TIME_NOT_AVAILABLE",
-            message:
-              "Ese horario acaba de ser ocupado. Selecciona otro horario.",
-          },
-          {
-            status: 409,
-          }
-        );
-      }
-
+    if (
+      !/^\d{2}:\d{2}$/.test(
+        time
+      )
+    ) {
       return NextResponse.json(
         {
           ok: false,
+
           message:
-            "No fue posible registrar la reserva.",
+            "La hora no es válida.",
         },
         {
-          status: 500,
+          status: 400,
         }
       );
     }
 
-    bookingId = booking.id;
-
-    /*
-     * GUARDAR COMPROBANTE
-     */
-
-    const extension =
-      receipt.name.split(".").pop() || "jpg";
-
-    const filename = cleanFilename(
-      `comprobante-${Date.now()}.${extension}`
-    );
-
-    receiptPath = `${booking.id}/${filename}`;
-
-    const fileBuffer = Buffer.from(
-      await receipt.arrayBuffer()
-    );
-
-    const { error: uploadError } =
-      await supabaseAdmin.storage
-        .from("payment-receipts")
-        .upload(receiptPath, fileBuffer, {
-          contentType: receipt.type,
-          upsert: false,
-        });
-
-    if (uploadError) {
-      console.error(
-        "Error subiendo comprobante:",
-        uploadError
-      );
-
-      await supabaseAdmin
-        .from("bookings")
-        .delete()
-        .eq("id", booking.id);
-
+    if (
+      !ALLOWED_SLOTS.has(
+        time
+      )
+    ) {
       return NextResponse.json(
         {
           ok: false,
+
           message:
-            "No fue posible guardar el comprobante.",
+            "La hora seleccionada no pertenece a los horarios disponibles de WAESTUDIO.",
         },
         {
-          status: 500,
+          status: 400,
+        }
+      );
+    }
+
+    const startsAt =
+      new Date(
+        `${date}T${time}:00${VENEZUELA_OFFSET}`
+      );
+
+    if (
+      Number.isNaN(
+        startsAt.getTime()
+      )
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+
+          message:
+            "La fecha de la reserva no es válida.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (
+      startsAt <= new Date()
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+
+          code:
+            "TIME_NOT_AVAILABLE",
+
+          message:
+            "Ese horario ya pasó. Selecciona otro horario.",
+        },
+        {
+          status: 409,
+        }
+      );
+    }
+
+    const dateForWeekday =
+      new Date(
+        `${date}T12:00:00${VENEZUELA_OFFSET}`
+      );
+
+    const weekday =
+      dateForWeekday.getDay();
+
+    if (weekday === 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+
+          code:
+            "TIME_NOT_AVAILABLE",
+
+          message:
+            "WAESTUDIO no abre los domingos.",
+        },
+        {
+          status: 409,
+        }
+      );
+    }
+
+    const startMinutes =
+      minutesFromTime(
+        time
+      );
+
+    const endMinutes =
+      startMinutes +
+      service.durationMinutes;
+
+    if (
+      startMinutes <
+        BUSINESS_OPEN_MINUTES ||
+      endMinutes >
+        BUSINESS_CLOSE_MINUTES
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+
+          code:
+            "TIME_NOT_AVAILABLE",
+
+          message:
+            "El servicio no cabe dentro del horario de atención.",
+        },
+        {
+          status: 409,
+        }
+      );
+    }
+
+    const endsAt =
+      new Date(
+        startsAt.getTime() +
+          service.durationMinutes *
+            60 *
+            1000
+      );
+
+    /*
+     * =================================
+     * VALIDACIÓN FINAL EN GOOGLE CALENDAR
+     * =================================
+     *
+     * La disponibilidad se vuelve a consultar
+     * justo antes de crear la cita.
+     */
+
+    const isBusy =
+      await isGoogleCalendarBusy(
+        startsAt,
+        endsAt
+      );
+
+    if (isBusy) {
+      return NextResponse.json(
+        {
+          ok: false,
+
+          code:
+            "TIME_NOT_AVAILABLE",
+
+          message:
+            "Ese horario acaba de ser ocupado. Selecciona otro horario.",
+        },
+        {
+          status: 409,
         }
       );
     }
 
     /*
-     * REGISTRAR PAGO
+     * =================================
+     * CREAR CITA EN GOOGLE CALENDAR
+     * =================================
      */
 
-    const { error: paymentError } =
-      await supabaseAdmin.from("payments").insert({
-        booking_id: booking.id,
-        method: paymentMethod,
-        payer_bank: payerBank,
-        reference,
-        amount_usd: priceUsd,
-        bcv_rate: bcvRate,
-        amount_ves: priceVes,
-        receipt_path: receiptPath,
+    const bookingCode =
+      createBookingCode();
+
+    const calendarEvent =
+      await createGoogleCalendarEvent({
+        bookingCode,
+
+        customerName,
+
+        customerWhatsapp,
+
+        service,
+
+        startsAt,
+
+        endsAt,
       });
 
-    if (paymentError) {
-      console.error(
-        "Error registrando pago:",
-        paymentError
-      );
-
-      await supabaseAdmin.storage
-        .from("payment-receipts")
-        .remove([receiptPath]);
-
-      await supabaseAdmin
-        .from("bookings")
-        .delete()
-        .eq("id", booking.id);
-
-      return NextResponse.json(
-        {
-          ok: false,
-          message:
-            "No fue posible registrar el pago.",
-        },
-        {
-          status: 500,
-        }
-      );
-    }
-
     /*
-     * TODO CORRECTO
+     * =================================
+     * RESPUESTA COMPATIBLE CON page.tsx
+     * =================================
+     *
+     * Ya no existe booking en Supabase.
+     * El eventId de Google Calendar pasa a ser
+     * el identificador interno de esta cita.
      */
+
+    const isCash =
+      paymentMethod === "cash";
 
     return NextResponse.json(
       {
         ok: true,
-        bookingId: booking.id,
-        bookingCode: booking.booking_code,
-        status: "payment_reported",
+
+        source:
+          "google-calendar",
+
+        bookingId:
+          calendarEvent.eventId,
+
+        bookingCode,
+
+        calendarEventId:
+          calendarEvent.eventId,
+
+        calendarCreated:
+          true,
+
+        paymentMethod:
+          paymentMethod || null,
+
+        cashCurrency:
+          isCash
+            ? cashCurrency || null
+            : null,
+
+        status:
+          isCash
+            ? "cash_pending"
+            : "payment_reported",
+
+        message:
+          "Reserva realizada. La cita fue agregada al calendario.",
       },
       {
         status: 201,
+
+        headers: {
+          "Cache-Control":
+            "no-store, max-age=0",
+        },
       }
     );
   } catch (error) {
-    console.error("Error general creando reserva:", error);
-
-    /*
-     * LIMPIEZA DE EMERGENCIA
-     */
-
-    if (receiptPath) {
-      await supabaseAdmin.storage
-        .from("payment-receipts")
-        .remove([receiptPath]);
-    }
-
-    if (bookingId) {
-      await supabaseAdmin
-        .from("bookings")
-        .delete()
-        .eq("id", bookingId);
-    }
+    console.error(
+      "Error creando cita en Google Calendar:",
+      error
+    );
 
     return NextResponse.json(
       {
         ok: false,
+
         message:
-          "Ocurrió un error inesperado al procesar la reserva.",
+          "No fue posible crear la cita en Google Calendar.",
       },
       {
         status: 500,
