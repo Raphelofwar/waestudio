@@ -41,17 +41,20 @@ export const metadata: Metadata = {
   applicationName:
     "WAESTUDIO",
 
-  manifest: "/manifest.webmanifest",
+  manifest:
+    "/manifest.webmanifest",
 
   icons: {
     icon: [
       {
-        url: "/pwa-192.png",
+        url:
+          "/waestudio-app-192.png",
         sizes: "192x192",
         type: "image/png",
       },
       {
-        url: "/pwa-512.png",
+        url:
+          "/waestudio-app-512.png",
         sizes: "512x512",
         type: "image/png",
       },
@@ -60,7 +63,7 @@ export const metadata: Metadata = {
     apple: [
       {
         url:
-          "/apple-touch-icon.png",
+          "/waestudio-apple-180.png",
         sizes: "180x180",
         type: "image/png",
       },
@@ -70,7 +73,8 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
 
-    title: "WAESTUDIO",
+    title:
+      "WAESTUDIO",
 
     statusBarStyle:
       "black-translucent",
@@ -82,13 +86,16 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  width: "device-width",
+  width:
+    "device-width",
 
   initialScale: 1,
 
-  viewportFit: "cover",
+  viewportFit:
+    "cover",
 
-  themeColor: "#090909",
+  themeColor:
+    "#090909",
 };
 
 export default function RootLayout({

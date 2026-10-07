@@ -95,6 +95,14 @@ type AvailabilityStatus =
   | "success"
   | "error";
 
+type DeferredInstallPrompt = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{
+    outcome: "accepted" | "dismissed";
+    platform: string;
+  }>;
+};
+
 function triggerTapFeedback() {
   if (
     typeof navigator !== "undefined" &&
@@ -390,6 +398,113 @@ export default function Home() {
     availabilityRefreshKey,
     setAvailabilityRefreshKey,
   ] = useState(0);
+
+  const [
+    installPrompt,
+    setInstallPrompt,
+  ] = useState<DeferredInstallPrompt | null>(null);
+
+  const [
+    installCardVisible,
+    setInstallCardVisible,
+  ] = useState(false);
+
+  const [
+    isIosInstall,
+    setIsIosInstall,
+  ] = useState(false);
+
+  const [
+    iosInstallHelpOpen,
+    setIosInstallHelpOpen,
+  ] = useState(false);
+
+  useEffect(() => {
+    const navigatorWithStandalone =
+      navigator as Navigator & {
+        standalone?: boolean;
+      };
+
+    const alreadyInstalled =
+      window.matchMedia(
+        "(display-mode: standalone)"
+      ).matches ||
+      navigatorWithStandalone.standalone ===
+        true;
+
+    if (alreadyInstalled) {
+      setInstallCardVisible(false);
+      return;
+    }
+
+    const userAgent =
+      navigator.userAgent;
+
+    const isiOS =
+      /iphone|ipad|ipod/i.test(
+        userAgent
+      );
+
+    const isAndroid =
+      /android/i.test(
+        userAgent
+      );
+
+    setIsIosInstall(isiOS);
+
+    if (isiOS) {
+      setInstallCardVisible(true);
+    }
+
+    const handleBeforeInstallPrompt =
+      (event: Event) => {
+        if (
+          !isAndroid &&
+          !/mobile/i.test(
+            userAgent
+          )
+        ) {
+          return;
+        }
+
+        event.preventDefault();
+
+        setInstallPrompt(
+          event as DeferredInstallPrompt
+        );
+
+        setInstallCardVisible(true);
+      };
+
+    const handleAppInstalled =
+      () => {
+        setInstallPrompt(null);
+        setInstallCardVisible(false);
+        setIosInstallHelpOpen(false);
+      };
+
+    window.addEventListener(
+      "beforeinstallprompt",
+      handleBeforeInstallPrompt
+    );
+
+    window.addEventListener(
+      "appinstalled",
+      handleAppInstalled
+    );
+
+    return () => {
+      window.removeEventListener(
+        "beforeinstallprompt",
+        handleBeforeInstallPrompt
+      );
+
+      window.removeEventListener(
+        "appinstalled",
+        handleAppInstalled
+      );
+    };
+  }, []);
 
   useEffect(() => {
     async function loadRate() {
@@ -1179,6 +1294,34 @@ export default function Home() {
     }
   }
 
+  async function handleInstallApp() {
+    triggerTapFeedback();
+
+    if (installPrompt) {
+      try {
+        await installPrompt.prompt();
+
+        await installPrompt.userChoice;
+      } catch (error) {
+        console.error(
+          "Error opening PWA install prompt:",
+          error
+        );
+      } finally {
+        setInstallPrompt(null);
+        setInstallCardVisible(false);
+      }
+
+      return;
+    }
+
+    if (isIosInstall) {
+      setIosInstallHelpOpen(
+        (value) => !value
+      );
+    }
+  }
+
   function formatDate(
     date: Date
   ) {
@@ -1296,6 +1439,87 @@ export default function Home() {
               >
                 Reservar cita
               </Button>
+
+              {installCardVisible && (
+                <div className="mt-4 rounded-[22px] border border-[#c5a66d]/20 bg-[#c5a66d]/[0.045] p-4">
+                  <div className="flex items-center gap-3.5">
+                    <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-[14px] border border-white/10 bg-[#090909] shadow-[0_8px_24px_rgba(0,0,0,0.28)]">
+                      <Image
+                        src="/waestudio-app-192.png"
+                        alt=""
+                        fill
+                        sizes="48px"
+                        className="object-cover"
+                      />
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[9px] font-medium uppercase tracking-[0.22em] text-[#c5a66d]">
+                        Acceso rápido
+                      </p>
+
+                      <p className="mt-1 text-sm font-medium text-[#f5f1e8]">
+                        Instala WAESTUDIO
+                      </p>
+
+                      <p className="mt-1 text-[11px] leading-4 text-white/35">
+                        Reserva desde tu pantalla de inicio como una app.
+                      </p>
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="outlined"
+                      disableRipple
+                      onClick={
+                        handleInstallApp
+                      }
+                      sx={{
+                        minWidth: "auto",
+                        flexShrink: 0,
+                        px: 1.8,
+                        py: 1,
+                        borderRadius: "12px",
+                        borderColor:
+                          "rgba(197, 166, 109, 0.42)",
+                        color: "#c5a66d",
+                        fontSize: 11,
+                        fontWeight: 600,
+                        whiteSpace: "nowrap",
+                        "&:hover": {
+                          borderColor:
+                            "rgba(197, 166, 109, 0.65)",
+                          backgroundColor:
+                            "rgba(197, 166, 109, 0.07)",
+                        },
+                        "&:active": {
+                          backgroundColor:
+                            "rgba(197, 166, 109, 0.12)",
+                        },
+                      }}
+                    >
+                      Instalar
+                    </Button>
+                  </div>
+
+                  {isIosInstall &&
+                    iosInstallHelpOpen && (
+                      <div className="mt-4 border-t border-white/10 pt-4">
+                        <p className="text-[11px] leading-5 text-white/45">
+                          En iPhone: toca{" "}
+                          <span className="font-medium text-[#f5f1e8]">
+                            Compartir
+                          </span>{" "}
+                          en Safari y selecciona{" "}
+                          <span className="font-medium text-[#f5f1e8]">
+                            Agregar a pantalla de inicio
+                          </span>
+                          .
+                        </p>
+                      </div>
+                    )}
+                </div>
+              )}
 
               <div className="mt-10 rounded-[28px] border border-white/10 bg-white/[0.035] p-5">
                 <div className="flex items-start justify-between">

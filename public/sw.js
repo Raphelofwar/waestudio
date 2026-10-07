@@ -1,10 +1,11 @@
 const CACHE_NAME =
-  "waestudio-static-v1";
+  "waestudio-static-v2";
 
 const PRECACHE_URLS = [
-  "/pwa-192.png",
-  "/pwa-512.png",
-  "/apple-touch-icon.png",
+  "/waestudio-app-192.png",
+  "/waestudio-app-512.png",
+  "/waestudio-maskable-512.png",
+  "/waestudio-apple-180.png",
 ];
 
 self.addEventListener(
@@ -70,7 +71,9 @@ self.addEventListener(
     }
 
     const url =
-      new URL(request.url);
+      new URL(
+        request.url
+      );
 
     if (
       url.origin !==
@@ -80,14 +83,9 @@ self.addEventListener(
     }
 
     /*
-     * MUY IMPORTANTE:
-     *
-     * Las APIs de reservas,
-     * disponibilidad y BCV
-     * siempre deben ir a red.
-     *
-     * Nunca usamos cache
-     * para /api/*.
+     * Las APIs siempre van a red.
+     * No cacheamos disponibilidad,
+     * reservas ni BCV.
      */
     if (
       url.pathname.startsWith(
