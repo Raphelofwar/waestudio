@@ -16,6 +16,7 @@ import TextField from "@mui/material/TextField";
 import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import SocialFooter from "./SocialFooter";
 import PaymentWhatsApp from "./PaymentWhatsApp";
+import BookingTicket from "./BookingTicket";
 
 type Step =
   | "home"
@@ -2923,139 +2924,34 @@ export default function Home() {
                     : "Tu horario ya quedó reservado. El comprobante de pago aún no se ha enviado ni verificado: compártelo con WAESTUDIO por WhatsApp usando las opciones de abajo."}
                 </p>
 
-                {bookingCode && (
-                  <div className="mt-6 rounded-2xl border border-[#c5a66d]/30 bg-[#c5a66d]/[0.06] px-4 py-4">
-                    <p className="text-[9px] uppercase tracking-[0.28em] text-[#c5a66d]">
-                      Código de reserva
-                    </p>
-                    <p className="mt-2 text-xl font-semibold tracking-[0.08em] text-[#f5f1e8]">
-                      {bookingCode}
+                {bookingCode ? (
+                  <BookingTicket
+                    bookingCode={bookingCode}
+                    customerName={name}
+                    serviceName={selectedService.name}
+                    appointmentDate={selectedDate}
+                    appointmentTime={selectedTime}
+                    priceUsd={selectedService.price}
+                  />
+                ) : (
+                  <div className="mt-7 rounded-[22px] border border-white/10 bg-white/[0.035] p-5">
+                    <p className="text-xs leading-5 text-white/60">
+                      La cita se registró, pero no se recibió un código
+                      para generar el ticket. Comunícate con WAESTUDIO
+                      antes de cerrar esta pantalla.
                     </p>
                   </div>
                 )}
 
-                <div className="mt-9 rounded-[28px] border border-white/10 bg-white/[0.035] p-5">
-                  <div className="space-y-4 text-sm">
-                    <div className="flex justify-between gap-4">
-                      <span className="text-white/30">
-                        Cliente
-                      </span>
-
-                      <span className="text-right">
-                        {name}
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between gap-4">
-                      <span className="text-white/30">
-                        Servicio
-                      </span>
-
-                      <span className="text-right">
-                        {
-                          selectedService.name
-                        }
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between gap-4">
-                      <span className="text-white/30">
-                        Fecha
-                      </span>
-
-                      <span className="text-right capitalize">
-                        {formatDate(
-                          selectedDate
-                        )}
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between gap-4">
-                      <span className="text-white/30">
-                        Hora
-                      </span>
-
-                      <span>
-                        {
-                          selectedTime
-                        }
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between gap-4">
-                      <span className="text-white/30">
-                        Pago
-                      </span>
-
-                      <span className="text-right">
-                        {paymentMethod === "cash"
-                          ? `Efectivo · ${
-                              cashCurrency === "USD"
-                                ? "Dólares"
-                                : "Bolívares"
-                            }`
-                          : paymentMethod === "mobile"
-                            ? "Pago Móvil"
-                            : "Transferencia"}
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between gap-4">
-                      <span className="text-white/30">
-                        Total
-                      </span>
-
-                      <div className="text-right">
-                        <p>
-                          $
-                          {
-                            selectedService.price
-                          }
-                          {paymentMethod ===
-                            "cash" &&
-                            cashCurrency ===
-                              "VES" && (
-                              <span className="ml-1 text-[10px] font-normal text-white/30">
-                                referencia
-                              </span>
-                            )}
-                        </p>
-
-                        {paymentMethod !==
-                          "cash" &&
-                          amountVes !==
-                            null && (
-                            <p className="mt-1 text-[10px] text-white/30">
-                              Bs.{" "}
-                              {formatVes(
-                                amountVes
-                              )}
-                            </p>
-                          )}
-
-                        {paymentMethod ===
-                          "cash" &&
-                          cashCurrency ===
-                            "VES" && (
-                            <p className="mt-1 text-[10px] text-white/30">
-                              Efectivo en bolívares · sin conversión BCV en la app
-                            </p>
-                          )}
-                      </div>
-                    </div>
-
-                    <div className="flex justify-between gap-4 border-t border-white/10 pt-4">
-                      <span className="text-white/30">
-                        Estado
-                      </span>
-
-                      <span className="text-right text-[#c5a66d]">
-                        {paymentMethod === "cash"
-                          ? "Efectivo pendiente al llegar"
-                          : "Comprobante pendiente de verificar"}
-                      </span>
-                    </div>
-                  </div>
+                <div className="mt-5 flex items-start justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-xs">
+                  <span className="text-white/40">
+                    Estado del pago
+                  </span>
+                  <span className="max-w-[65%] text-right text-[#c5a66d]">
+                    {paymentMethod === "cash"
+                      ? "Efectivo pendiente de cobrar en el local"
+                      : "Comprobante pendiente de verificación"}
+                  </span>
                 </div>
 
                 {(paymentMethod === "mobile" ||
