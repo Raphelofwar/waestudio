@@ -106,6 +106,36 @@ type DeferredInstallPrompt = Event & {
   }>;
 };
 
+function isBarbershopOpenNow() {
+  // Horario de WAESTUDIO en Caracas: lunes a sábado, 09:00–18:00.
+  // Este indicador muestra el horario del local, no cupos disponibles.
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Caracas",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+
+  const part = (type: string) =>
+    parts.find((item) => item.type === type)?.value;
+
+  const weekday = part("weekday");
+  const hour = Number(part("hour"));
+  const minute = Number(part("minute"));
+
+  if (
+    !weekday ||
+    !Number.isFinite(hour) ||
+    !Number.isFinite(minute)
+  ) {
+    return false;
+  }
+
+  const minutesNow = hour * 60 + minute;
+  return weekday !== "Sun" && minutesNow >= 9 * 60 && minutesNow < 18 * 60;
+}
+
 function triggerTapFeedback() {
   if (
     typeof navigator !== "undefined" &&
@@ -153,14 +183,6 @@ const availableHours = [
   "2:45 PM",
   "3:30 PM",
   "4:15 PM",
-  "5:00 PM",
-];
-
-const todayQuickHours = [
-  "10:00 AM",
-  "11:30 AM",
-  "2:00 PM",
-  "3:30 PM",
   "5:00 PM",
 ];
 
@@ -378,24 +400,30 @@ export default function Home() {
   ] = useState<string | null>(null);
 
   const [
-    todayAvailabilitySlots,
-    setTodayAvailabilitySlots,
-  ] = useState<AvailabilitySlot[]>([]);
-
-  const [
-    todayAvailabilityStatus,
-    setTodayAvailabilityStatus,
-  ] = useState<AvailabilityStatus>("loading");
-
-  const [
-    todayIsOpen,
-    setTodayIsOpen,
-  ] = useState<boolean | null>(null);
-
-  const [
     selectedAvailableServices,
     setSelectedAvailableServices,
   ] = useState<string[]>([]);
+
+  const [isBusinessOpen, setIsBusinessOpen] =
+    useState<boolean | null>(null);
+
+  useEffect(() => {
+    const refreshStatus = () => {
+      setIsBusinessOpen(isBarbershopOpenNow());
+    };
+
+    refreshStatus();
+
+    const interval = window.setInterval(refreshStatus, 60_000);
+    window.addEventListener("focus", refreshStatus);
+    document.addEventListener("visibilitychange", refreshStatus);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshStatus);
+      document.removeEventListener("visibilitychange", refreshStatus);
+    };
+  }, []);
 
   const [
     availabilityRefreshKey,
@@ -556,64 +584,6 @@ export default function Home() {
 
     loadRate();
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadTodayAvailability() {
-      try {
-        setTodayAvailabilityStatus("loading");
-
-        const date = formatApiDate(today);
-
-        const response = await fetch(
-          `/api/availability?date=${date}&t=${Date.now()}`,
-          {
-            cache: "no-store",
-          }
-        );
-
-        const data: AvailabilityApiResponse =
-          await response.json();
-
-        if (!response.ok || !data.ok) {
-          throw new Error(
-            data.message ||
-              "No fue posible consultar la disponibilidad."
-          );
-        }
-
-        if (cancelled) {
-          return;
-        }
-
-        setTodayIsOpen(data.isOpen);
-        setTodayAvailabilitySlots(
-          data.slots || []
-        );
-        setTodayAvailabilityStatus("success");
-      } catch (error) {
-        console.error(
-          "Error loading today availability:",
-          error
-        );
-
-        if (cancelled) {
-          return;
-        }
-
-        setTodayIsOpen(null);
-        setTodayAvailabilitySlots([]);
-        setTodayAvailabilityStatus("error");
-      }
-    }
-
-    loadTodayAvailability();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [today, availabilityRefreshKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -800,15 +770,6 @@ export default function Home() {
         referenceDigits.length >= 4 &&
         receipt !== null;
 
-  const todayQuickSlots =
-    todayAvailabilitySlots.filter(
-      (slot) =>
-        slot.available &&
-        todayQuickHours.includes(
-          slot.label
-        )
-    );
-
   const visibleAvailabilitySlots =
     availabilitySlots.filter(
       (slot) =>
@@ -986,36 +947,6 @@ export default function Home() {
         1
       )
     );
-  }
-
-  function selectTodayTime(
-    time: string
-  ) {
-    const slot =
-      todayAvailabilitySlots.find(
-        (item) =>
-          item.label === time &&
-          item.available
-      );
-
-    if (!slot) {
-      return;
-    }
-
-    setSelectedDate(
-      new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate()
-      )
-    );
-
-    setSelectedTime(time);
-    setSelectedService(null);
-    setSelectedAvailableServices(
-      slot.availableServices
-    );
-    setStep("service");
   }
 
   function selectTime(
@@ -1368,25 +1299,23 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2" aria-live="polite">
                 <span
                   className={`h-2 w-2 rounded-full ${
-                    todayAvailabilityStatus ===
-                    "loading"
+                    isBusinessOpen === null
                       ? "bg-white/30"
-                      : todayIsOpen
+                      : isBusinessOpen
                         ? "bg-emerald-400"
                         : "bg-red-400/70"
                   }`}
                 />
 
-                <span className="text-[11px] text-white/45">
-                  {todayAvailabilityStatus ===
-                  "loading"
-                    ? "Consultando"
-                    : todayIsOpen
-                      ? "Disponible"
-                      : "Cerrado hoy"}
+                <span className="text-[11px] text-white/55">
+                  {isBusinessOpen === null
+                    ? "..."
+                    : isBusinessOpen
+                      ? "Abierto"
+                      : "Cerrado"}
                 </span>
               </div>
             </header>
@@ -1524,132 +1453,6 @@ export default function Home() {
                 </div>
               )}
 
-              <div className="mt-10 rounded-[28px] border border-white/10 bg-white/[0.035] p-5">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-[9px] uppercase tracking-[0.28em] text-white/30">
-                      Disponibilidad rápida
-                    </p>
-
-                    <h2 className="mt-3 text-3xl font-light">
-                      Hoy
-                    </h2>
-
-                    <p className="mt-1 text-xs text-white/35">
-                      Toca una hora para reservar
-                    </p>
-                  </div>
-
-                  <span className="rounded-full border border-[#c5a66d]/30 bg-[#c5a66d]/10 px-3 py-2 text-[10px] text-[#c5a66d]">
-                    {todayAvailabilityStatus ===
-                    "loading"
-                      ? "..."
-                      : todayIsOpen
-                        ? `${todayQuickSlots.length} cupos`
-                        : "Cerrado"}
-                  </span>
-                </div>
-
-                {todayAvailabilityStatus ===
-                  "loading" && (
-                  <div className="mt-6 grid grid-cols-2 gap-2.5">
-                    {[1, 2, 3, 4].map(
-                      (item) => (
-                        <Skeleton
-                          key={item}
-                          variant="rounded"
-                          animation="wave"
-                          height={48}
-                          sx={{
-                            borderRadius: "12px",
-                            backgroundColor: "rgba(255, 255, 255, 0.035)",
-                          }}
-                        />
-                      )
-                    )}
-                  </div>
-                )}
-
-                {todayAvailabilityStatus ===
-                  "error" && (
-                  <div className="mt-6">
-                    <Alert
-                      severity="error"
-                      variant="outlined"
-                      sx={{
-                        borderRadius: "16px",
-                        borderColor: "rgba(248, 113, 113, 0.20)",
-                        backgroundColor: "rgba(248, 113, 113, 0.05)",
-                        color: "rgba(254, 202, 202, 0.78)",
-                        fontSize: 12,
-                      }}
-                    >
-                      No pudimos consultar los cupos de hoy.
-                    </Alert>
-
-                    <Button
-                      type="button"
-                      variant="outlined"
-                      onClick={() =>
-                        setAvailabilityRefreshKey(
-                          (value) => value + 1
-                        )
-                      }
-                      onPointerDown={triggerTapFeedback}
-                      sx={{
-                        ...secondaryActionSx,
-                        mt: 1.5,
-                      }}
-                    >
-                      Reintentar
-                    </Button>
-                  </div>
-                )}
-
-                {todayAvailabilityStatus ===
-                  "success" &&
-                  todayIsOpen &&
-                  todayQuickSlots.length >
-                    0 && (
-                  <div className="mt-6 grid grid-cols-2 gap-2.5">
-                    {todayQuickSlots.map(
-                      (slot) => (
-                        <button
-                          type="button"
-                          key={slot.time}
-                          onClick={() =>
-                            selectTodayTime(
-                              slot.label
-                            )
-                          }
-                          onPointerDown={triggerTapFeedback}
-                          className="min-h-12 touch-manipulation select-none rounded-xl border border-white/10 bg-white/[0.02] text-[13px] text-white/70 transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.94] active:border-[#c5a66d]/70 active:bg-[#c5a66d]/15 active:text-[#f5f1e8] active:shadow-[inset_0_2px_8px_rgba(0,0,0,0.35)]"
-                        >
-                          {slot.label}
-                        </button>
-                      )
-                    )}
-                  </div>
-                )}
-
-                {todayAvailabilityStatus ===
-                  "success" &&
-                  (!todayIsOpen ||
-                    todayQuickSlots.length ===
-                      0) && (
-                  <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.02] p-4 text-center">
-                    <p className="text-xs text-white/40">
-                      {todayIsOpen
-                        ? "No quedan cupos rápidos disponibles para hoy."
-                        : "Hoy la barbería está cerrada."}
-                    </p>
-                  </div>
-                )}
-
-                <p className="mt-5 border-t border-white/10 pt-4 text-[10px] leading-4 text-white/25">
-                  Los horarios mostrados se consultan en tiempo real.
-                </p>
-              </div>
             </div>
 
             <div className="-mx-5 mt-2">
