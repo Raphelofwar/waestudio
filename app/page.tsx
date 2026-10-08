@@ -15,6 +15,7 @@ import Skeleton from "@mui/material/Skeleton";
 import TextField from "@mui/material/TextField";
 import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import SocialFooter from "./SocialFooter";
+import PaymentWhatsApp from "./PaymentWhatsApp";
 
 type Step =
   | "home"
@@ -2901,31 +2902,25 @@ export default function Home() {
                 </div>
 
                 <p className="mt-8 text-[10px] uppercase tracking-[0.35em] text-[#c5a66d]">
-                  {paymentMethod === "cash"
-                    ? "Cita reservada"
-                    : "Pago reportado"}
+                  Cita reservada
                 </p>
 
                 <h2 className="mt-4 text-4xl font-medium tracking-[-0.04em]">
-                  {paymentMethod === "cash"
-                    ? "Tu cita"
-                    : "Recibimos"}
+                  Tu cita
                   <br />
                   <span className="text-white/30">
-                    {paymentMethod === "cash"
-                      ? "quedó reservada."
-                      : "tu solicitud."}
+                    quedó reservada.
                   </span>
                 </h2>
 
                 <p className="mt-5 text-sm leading-6 text-white/40">
                   {paymentMethod === "cash"
-                    ? `Paga en efectivo al llegar a WAESTUDIO. El barbero verá que llevarás ${
+                    ? `Pagarás en efectivo al llegar a WAESTUDIO, en ${
                         cashCurrency === "USD"
                           ? "dólares"
                           : "bolívares"
-                      } en efectivo.`
-                    : "WAESTUDIO revisará el comprobante antes de confirmar definitivamente tu cita."}
+                      }.`
+                    : "Tu horario ya quedó reservado. El comprobante de pago aún no se ha enviado ni verificado: compártelo con WAESTUDIO por WhatsApp usando las opciones de abajo."}
                 </p>
 
                 {bookingCode && (
@@ -3056,12 +3051,30 @@ export default function Home() {
 
                       <span className="text-right text-[#c5a66d]">
                         {paymentMethod === "cash"
-                          ? "Efectivo por cobrar en el local"
-                          : "Pago por verificar"}
+                          ? "Efectivo pendiente al llegar"
+                          : "Comprobante pendiente de verificar"}
                       </span>
                     </div>
                   </div>
                 </div>
+
+                {(paymentMethod === "mobile" ||
+                  paymentMethod === "transfer") && (
+                  <PaymentWhatsApp
+                    customerName={name}
+                    customerWhatsapp={whatsapp}
+                    bookingCode={bookingCode}
+                    serviceName={selectedService.name}
+                    appointmentDate={formatDate(selectedDate)}
+                    appointmentTime={selectedTime}
+                    amountUsd={selectedService.price}
+                    amountVes={amountVes}
+                    paymentMethod={paymentMethod}
+                    bank={bank}
+                    reference={reference}
+                    receipt={receipt}
+                  />
+                )}
               </div>
 
               <Button
@@ -3073,7 +3086,7 @@ export default function Home() {
                   startNewBooking
                 }
                 onPointerDown={triggerTapFeedback}
-                sx={primaryActionSx}
+                sx={{ ...primaryActionSx, mt: 3 }}
               >
                 Volver al inicio
               </Button>
