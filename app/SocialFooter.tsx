@@ -1,4 +1,6 @@
 
+import Link from "next/link";
+
 import {
   SiTiktok,
   SiWhatsapp,
@@ -47,6 +49,15 @@ export default function SocialFooter() {
       <p className="mt-3 text-center text-[9px] uppercase tracking-[0.25em] text-white/25">
         WAESTUDIO · Conecta con nosotros
       </p>
+
+      <div className="mt-4 flex items-center justify-center">
+        <Link
+          href="/privacidad"
+          className="text-center text-[11px] text-white/45 underline decoration-[#c5a66d]/35 underline-offset-4 transition-colors duration-200 hover:text-[#c5a66d]"
+        >
+          Política de privacidad
+        </Link>
+      </div>
     </footer>
   );
 }
