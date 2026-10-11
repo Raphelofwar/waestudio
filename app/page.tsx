@@ -994,6 +994,8 @@ export default function Home() {
       | "transfer"
       | "cash"
   ) {
+    if (method === "transfer") return;
+
     setPaymentMethod(method);
     setCashCurrency(null);
 
@@ -2211,26 +2213,22 @@ export default function Home() {
 
                 <button
                   type="button"
-                  onClick={() =>
-                    selectPaymentMethod(
-                      "transfer"
-                    )
-                  }
-                  onPointerDown={triggerTapFeedback}
-                  className="flex min-h-24 w-full touch-manipulation select-none items-center justify-between rounded-[24px] border border-white/10 bg-white/[0.035] p-5 text-left transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.96] active:border-[#c5a66d]/70 active:bg-[#c5a66d]/[0.12] active:shadow-[inset_0_3px_12px_rgba(0,0,0,0.34)]"
+                  disabled
+                  aria-label="Transferencia bancaria, próximamente"
+                  className="flex min-h-24 w-full cursor-not-allowed items-center justify-between rounded-[24px] border border-[#c5a66d]/20 bg-white/[0.025] p-5 text-left opacity-65"
                 >
                   <div>
                     <p className="text-base font-medium">
                       Transferencia
                     </p>
 
-                    <p className="mt-1 text-xs text-white/30">
-                      Transferencia bancaria
+                    <p className="mt-2 text-xs font-medium text-[#c5a66d]">
+                      Próximamente
                     </p>
                   </div>
 
-                  <span className="text-xl text-[#c5a66d]">
-                    →
+                  <span className="text-xl text-[#c5a66d]/60">
+                    🔒
                   </span>
                 </button>
 
@@ -2262,7 +2260,7 @@ export default function Home() {
 
               <div className="mt-auto pt-8">
                 <p className="text-center text-[10px] leading-4 text-white/25">
-                  Pago Móvil y Transferencia requieren verificación. En efectivo, pagas al llegar al local.
+                  Pago Móvil requiere verificación manual. La transferencia estará disponible próximamente. En efectivo, pagas al llegar.
                 </p>
               </div>
             </section>
@@ -2482,7 +2480,7 @@ export default function Home() {
                           </span>
 
                           <span>
-                            Banesco
+                            Banco de Venezuela (0102)
                           </span>
                         </div>
 
@@ -2492,7 +2490,7 @@ export default function Home() {
                           </span>
 
                           <span>
-                            0412-0000000
+                            0414-1687536
                           </span>
                         </div>
 
@@ -2502,46 +2500,18 @@ export default function Home() {
                           </span>
 
                           <span>
-                            V-00.000.000
+                            25.128.018
                           </span>
                         </div>
                       </div>
                     ) : (
-                      <div className="mt-5 space-y-4 text-sm">
-                        <div className="flex justify-between gap-4">
-                          <span className="text-white/30">
-                            Banco
-                          </span>
-
-                          <span>
-                            Banesco
-                          </span>
-                        </div>
-
-                        <div className="flex justify-between gap-4">
-                          <span className="text-white/30">
-                            Cuenta
-                          </span>
-
-                          <span className="text-right">
-                            0134-0000-00-0000000000
-                          </span>
-                        </div>
-
-                        <div className="flex justify-between gap-4">
-                          <span className="text-white/30">
-                            Titular
-                          </span>
-
-                          <span>
-                            WAESTUDIO
-                          </span>
-                        </div>
-                      </div>
+                      <p className="mt-5 text-sm text-white/50">
+                        Transferencia bancaria disponible próximamente.
+                      </p>
                     )}
 
                     <p className="mt-5 border-t border-white/10 pt-4 text-[10px] leading-4 text-white/25">
-                      Estos datos bancarios son demostrativos. Luego colocaremos los datos reales de WAESTUDIO.
+                      Verifica los datos antes de pagar. El responsable de WAESTUDIO confirmará el pago manualmente.
                     </p>
                   </div>
 

@@ -23,7 +23,6 @@ const MAX_RECEIPT_BYTES = 3_800_000;
 const PAYMENT_METHODS = new Set([
   "cash",
   "mobile",
-  "transfer",
 ]);
 
 const CASH_CURRENCIES = new Set([
@@ -745,6 +744,17 @@ export async function POST(request: Request) {
     }
 
     // VALIDAR PAGO
+
+    if (paymentMethod === "transfer") {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "PAYMENT_METHOD_UNAVAILABLE",
+          message: "Transferencia bancaria estará disponible próximamente.",
+        },
+        { status: 409 }
+      );
+    }
 
     if (!PAYMENT_METHODS.has(paymentMethod)) {
       return NextResponse.json(
