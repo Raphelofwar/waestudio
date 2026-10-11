@@ -18,8 +18,8 @@ const VENEZUELA_OFFSET = "-04:00";
 /*
  * Horarios que actualmente utiliza la interfaz.
  *
- * Incluimos también los horarios rápidos de la pantalla
- * principal para poder consultar ambos desde el mismo API.
+ * Mismos horarios que acepta la API de reservas.
+ * La pantalla principal usa únicamente "Reservar cita".
  */
 const CANDIDATE_SLOTS = [
   "09:00",
@@ -153,8 +153,35 @@ function createGoogleOAuthClient() {
 }
 
 function isValidDate(value: string) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(
-    value
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+
+  if (!match) {
+    return false;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  // Verificación real del calendario, incluyendo años bisiestos.
+  // Evita que fechas inexistentes se normalicen a otros días.
+  if (
+    year < 2020 ||
+    year > 2100 ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31
+  ) {
+    return false;
+  }
+
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
   );
 }
 
@@ -278,6 +305,14 @@ async function getBusyPeriods(
   const calendarResults =
     Object.values(calendars);
 
+  // No devolver horarios libres si Google no informa del calendario.
+  // Solo consultamos uno: una respuesta vacía/incompleta es un error.
+  if (calendarResults.length !== 1) {
+    throw new Error(
+      "Google Calendar no devolvió datos del calendario solicitado."
+    );
+  }
+
   const calendarErrors =
     calendarResults.flatMap(
       (calendarData) =>
@@ -367,8 +402,10 @@ export async function GET(
       );
     }
 
+    // Mediodía de Caracas equivale a las 16:00 UTC.
+    // getUTCDay es independiente del huso horario del servidor.
     const weekday =
-      dateForWeekday.getDay();
+      dateForWeekday.getUTCDay();
 
     /*
      * HORARIO DEL NEGOCIO

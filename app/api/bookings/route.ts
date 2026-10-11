@@ -1,44 +1,44 @@
-import {
-  createHash,
-  randomBytes,
-} from "crypto";
+
+import { createHash, randomBytes } from "crypto";
 import { google } from "googleapis";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const GOOGLE_TIME_ZONE =
-  "America/Caracas";
+// ============================================================
+// CONFIGURACIÓN GENERAL DE WAESTUDIO
+// ============================================================
 
-const VENEZUELA_OFFSET =
-  "-04:00";
+const GOOGLE_TIME_ZONE = "America/Caracas";
+const VENEZUELA_OFFSET = "-04:00";
 
-const BUSINESS_OPEN_MINUTES =
-  9 * 60;
+const BUSINESS_OPEN_MINUTES = 9 * 60;
+const BUSINESS_CLOSE_MINUTES = 18 * 60;
 
-const BUSINESS_CLOSE_MINUTES =
-  18 * 60;
-
-/*
- * Cada reserva adquiere candados temporales
- * de 15 minutos mientras se crea la cita.
- *
- * Esto evita que dos clientes que confirman
- * casi al mismo tiempo puedan crear citas
- * que se solapen.
- */
+// Los candados temporales protegen intervalos de 15 minutos.
 const LOCK_BUCKET_MINUTES = 15;
 
-/*
- * Si un proceso se interrumpe inesperadamente,
- * un candado puede quedar en Calendar.
- *
- * Después de 2 minutos se considera vencido
- * y otra solicitud puede recuperarlo.
- */
-const LOCK_TTL_MS =
-  2 * 60 * 1000;
+// Un candado abandonado se considera vencido después de 2 min.
+const LOCK_TTL_MS = 2 * 60 * 1000;
+
+// Límites de formularios.
+// La imagen no se almacena en esta API.
+const MAX_REQUEST_BYTES = 4_000_000;
+const MAX_FORM_FIELDS = 16;
+const MAX_TEXT_BYTES = 2_000;
+const MAX_RECEIPT_BYTES = 3_800_000;
+
+const PAYMENT_METHODS = new Set([
+  "cash",
+  "mobile",
+  "transfer",
+]);
+
+const CASH_CURRENCIES = new Set([
+  "USD",
+  "VES",
+]);
 
 const ALLOWED_SLOTS = new Set([
   "09:00",
@@ -70,8 +70,7 @@ const SERVICES = {
   },
 } as const;
 
-type ServiceCode =
-  keyof typeof SERVICES;
+type ServiceCode = keyof typeof SERVICES;
 
 type CalendarLock = {
   eventId: string;
@@ -79,50 +78,80 @@ type CalendarLock = {
   endsAt: Date;
 };
 
+// ============================================================
+// FUNCIONES DE VALIDACIÓN
+// ============================================================
+
 function getText(
   formData: FormData,
   key: string
-) {
-  const value =
-    formData.get(key);
+): string {
+  const value = formData.get(key);
 
-  if (
-    typeof value !== "string"
-  ) {
+  if (typeof value !== "string") {
     return "";
   }
 
   return value.trim();
 }
 
-function minutesFromTime(
-  time: string
-) {
-  const [hours, minutes] =
-    time
-      .split(":")
-      .map(Number);
+function isValidDate(value: string): boolean {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+
+  if (!match) {
+    return false;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  if (
+    year < 2020 ||
+    year > 2100 ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31
+  ) {
+    return false;
+  }
+
+  const parsed = new Date(
+    Date.UTC(year, month - 1, day)
+  );
 
   return (
-    hours * 60 +
-    minutes
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
   );
 }
 
+function minutesFromTime(time: string): number {
+  const [hours, minutes] = time
+    .split(":")
+    .map(Number);
+
+  return hours * 60 + minutes;
+}
+
+// ============================================================
+// CONEXIÓN CON GOOGLE CALENDAR
+// ============================================================
+
 function createGoogleOAuthClient() {
-  const clientId =
-    process.env.GOOGLE_CLIENT_ID;
+  const clientId = process.env.GOOGLE_CLIENT_ID;
 
   const clientSecret =
-    process.env
-      .GOOGLE_CLIENT_SECRET;
+    process.env.GOOGLE_CLIENT_SECRET;
 
   const redirectUri =
     process.env.GOOGLE_REDIRECT_URI;
 
   const refreshToken =
-    process.env
-      .GOOGLE_REFRESH_TOKEN;
+    process.env.GOOGLE_REFRESH_TOKEN;
 
   if (
     !clientId ||
@@ -135,16 +164,14 @@ function createGoogleOAuthClient() {
     );
   }
 
-  const oauth2Client =
-    new google.auth.OAuth2(
-      clientId,
-      clientSecret,
-      redirectUri
-    );
+  const oauth2Client = new google.auth.OAuth2(
+    clientId,
+    clientSecret,
+    redirectUri
+  );
 
   oauth2Client.setCredentials({
-    refresh_token:
-      refreshToken,
+    refresh_token: refreshToken,
   });
 
   return oauth2Client;
@@ -153,21 +180,19 @@ function createGoogleOAuthClient() {
 function createCalendarClient() {
   return google.calendar({
     version: "v3",
-
-    auth:
-      createGoogleOAuthClient(),
+    auth: createGoogleOAuthClient(),
   });
 }
 
-function getCalendarId() {
-  return (
-    process.env
-      .GOOGLE_CALENDAR_ID ||
-    "primary"
-  );
+function getCalendarId(): string {
+  return process.env.GOOGLE_CALENDAR_ID || "primary";
 }
 
-function createBookingCode() {
+// ============================================================
+// CÓDIGOS E IDENTIFICADORES
+// ============================================================
+
+function createBookingCode(): string {
   return `WAE-${randomBytes(3)
     .toString("hex")
     .toUpperCase()}`;
@@ -175,31 +200,16 @@ function createBookingCode() {
 
 function createCalendarEventId(
   bookingCode: string
-) {
-  /*
-   * Los caracteres hexadecimales utilizados
-   * por SHA-256 son compatibles con IDs
-   * personalizados de Calendar.
-   */
+): string {
   return createHash("sha256")
-    .update(
-      `waestudio-${bookingCode}`
-    )
+    .update(`waestudio-${bookingCode}`)
     .digest("hex")
     .slice(0, 40);
 }
 
 function createLockEventId(
   bucketStart: Date
-) {
-  /*
-   * El ID depende únicamente del intervalo.
-   *
-   * Dos solicitudes que intenten ocupar
-   * el mismo bloque de 15 minutos tratarán
-   * de crear exactamente el mismo eventId.
-   * Google Calendar permitirá solo uno.
-   */
+): string {
   return createHash("sha256")
     .update(
       `waestudio-lock-${bucketStart.toISOString()}`
@@ -210,7 +220,7 @@ function createLockEventId(
 
 function getGoogleHttpStatus(
   error: unknown
-) {
+): number | null {
   if (
     typeof error !== "object" ||
     error === null
@@ -218,125 +228,103 @@ function getGoogleHttpStatus(
     return null;
   }
 
-  const candidate =
-    error as {
-      code?: number | string;
-
-      response?: {
-        status?: number;
-      };
+  const candidate = error as {
+    code?: number | string;
+    response?: {
+      status?: number;
     };
+  };
 
   if (
-    typeof candidate.response
-      ?.status === "number"
+    typeof candidate.response?.status === "number"
   ) {
     return candidate.response.status;
   }
 
-  const numericCode =
-    Number(candidate.code);
+  const numericCode = Number(candidate.code);
 
-  return Number.isFinite(
-    numericCode
-  )
+  return Number.isFinite(numericCode)
     ? numericCode
     : null;
 }
+
+// ============================================================
+// CONSTRUCCIÓN DE CANDADOS TEMPORALES
+// ============================================================
 
 function buildLockBuckets(
   startsAt: Date,
   endsAt: Date
 ): CalendarLock[] {
   const bucketMs =
-    LOCK_BUCKET_MINUTES *
-    60 *
-    1000;
+    LOCK_BUCKET_MINUTES * 60 * 1000;
 
-  const locks:
-    CalendarLock[] = [];
+  const locks: CalendarLock[] = [];
 
   for (
-    let cursor =
-      startsAt.getTime();
-
-    cursor <
-    endsAt.getTime();
-
+    let cursor = startsAt.getTime();
+    cursor < endsAt.getTime();
     cursor += bucketMs
   ) {
-    const bucketStart =
-      new Date(cursor);
+    const bucketStart = new Date(cursor);
 
-    const bucketEnd =
-      new Date(
-        Math.min(
-          cursor + bucketMs,
-          endsAt.getTime()
-        )
-      );
+    const bucketEnd = new Date(
+      Math.min(
+        cursor + bucketMs,
+        endsAt.getTime()
+      )
+    );
 
     locks.push({
-      eventId:
-        createLockEventId(
-          bucketStart
-        ),
-
-      startsAt:
-        bucketStart,
-
-      endsAt:
-        bucketEnd,
+      eventId: createLockEventId(bucketStart),
+      startsAt: bucketStart,
+      endsAt: bucketEnd,
     });
   }
 
   return locks;
 }
 
+// ============================================================
+// CONSULTA DE DISPONIBILIDAD EN GOOGLE CALENDAR
+// ============================================================
+
 async function isGoogleCalendarBusy(
   startsAt: Date,
   endsAt: Date
-) {
-  const calendar =
-    createCalendarClient();
+): Promise<boolean> {
+  const calendar = createCalendarClient();
 
-  const response =
-    await calendar.freebusy.query({
-      requestBody: {
-        timeMin:
-          startsAt.toISOString(),
+  const response = await calendar.freebusy.query({
+    requestBody: {
+      timeMin: startsAt.toISOString(),
+      timeMax: endsAt.toISOString(),
+      timeZone: GOOGLE_TIME_ZONE,
+      items: [
+        {
+          id: getCalendarId(),
+        },
+      ],
+    },
+  });
 
-        timeMax:
-          endsAt.toISOString(),
+  const calendars = response.data.calendars || {};
 
-        timeZone:
-          GOOGLE_TIME_ZONE,
+  const results = Object.values(calendars);
 
-        items: [
-          {
-            id:
-              getCalendarId(),
-          },
-        ],
-      },
-    });
-
-  const calendars =
-    response.data.calendars ||
-    {};
-
-  const results =
-    Object.values(calendars);
-
-  const errors =
-    results.flatMap(
-      (calendarData) =>
-        calendarData.errors || []
+  // Nunca interpretar una respuesta sin calendario
+  // como si todos los horarios estuvieran libres.
+  if (results.length !== 1) {
+    throw new Error(
+      "Google Calendar no devolvió el calendario solicitado."
     );
+  }
 
-  if (
-    errors.length > 0
-  ) {
+  const errors = results.flatMap(
+    (calendarData) => calendarData.errors || []
+  );
+
+  if (errors.length > 0) {
     console.error(
       "Google Calendar freebusy errors:",
       errors
@@ -347,64 +335,51 @@ async function isGoogleCalendarBusy(
     );
   }
 
-  return results.some(
-    (calendarData) =>
-      (calendarData.busy || [])
-        .length > 0
-  );
+  const calendarData = results[0];
+
+  if (!Array.isArray(calendarData.busy)) {
+    throw new Error(
+      "Google Calendar devolvió una disponibilidad incompleta."
+    );
+  }
+
+  return calendarData.busy.length > 0;
 }
+
+// ============================================================
+// CREAR UN CANDADO EN GOOGLE CALENDAR
+// ============================================================
 
 async function insertLockEvent(
   lock: CalendarLock
-) {
-  const calendar =
-    createCalendarClient();
+): Promise<boolean> {
+  const calendar = createCalendarClient();
+  const calendarId = getCalendarId();
 
-  const calendarId =
-    getCalendarId();
-
-  const expiresAt =
-    Date.now() +
-    LOCK_TTL_MS;
+  const expiresAt = Date.now() + LOCK_TTL_MS;
 
   const insert = async () => {
     await calendar.events.insert({
       calendarId,
-
       requestBody: {
-        id:
-          lock.eventId,
+        id: lock.eventId,
 
         summary:
           "WAESTUDIO · Reserva en proceso",
 
-        /*
-         * Transparent significa que este
-         * evento temporal NO bloquea FreeBusy.
-         *
-         * El bloqueo real entre solicitudes
-         * se obtiene mediante su eventId único.
-         */
-        transparency:
-          "transparent",
-
-        visibility:
-          "private",
+        // Los candados no aparecen como ocupado en
+        // FreeBusy. Se coordinan por su ID único.
+        transparency: "transparent",
+        visibility: "private",
 
         start: {
-          dateTime:
-            lock.startsAt.toISOString(),
-
-          timeZone:
-            GOOGLE_TIME_ZONE,
+          dateTime: lock.startsAt.toISOString(),
+          timeZone: GOOGLE_TIME_ZONE,
         },
 
         end: {
-          dateTime:
-            lock.endsAt.toISOString(),
-
-          timeZone:
-            GOOGLE_TIME_ZONE,
+          dateTime: lock.endsAt.toISOString(),
+          timeZone: GOOGLE_TIME_ZONE,
         },
 
         reminders: {
@@ -413,13 +388,9 @@ async function insertLockEvent(
 
         extendedProperties: {
           private: {
-            waestudioLock:
-              "true",
-
+            waestudioLock: "true",
             waestudioLockExpiresAt:
-              String(
-                expiresAt
-              ),
+              String(expiresAt),
           },
         },
       },
@@ -428,59 +399,36 @@ async function insertLockEvent(
 
   try {
     await insert();
-
     return true;
   } catch (error) {
-    /*
-     * 409 significa que ya existe un evento
-     * con ese mismo ID: otro proceso posee
-     * el candado o quedó uno antiguo.
-     */
-    if (
-      getGoogleHttpStatus(
-        error
-      ) !== 409
-    ) {
+    // 409: el identificador ya existe.
+    if (getGoogleHttpStatus(error) !== 409) {
       throw error;
     }
   }
 
-  /*
-   * Si existe un candado viejo por un proceso
-   * que se interrumpió, lo recuperamos.
-   */
+  // Si el candado existente está vencido,
+  // intentamos recuperarlo.
   try {
-    const existing =
-      await calendar.events.get({
-        calendarId,
-
-        eventId:
-          lock.eventId,
-      });
+    const existing = await calendar.events.get({
+      calendarId,
+      eventId: lock.eventId,
+    });
 
     const privateData =
-      existing.data
-        .extendedProperties
-        ?.private;
+      existing.data.extendedProperties?.private;
 
     const isWaestudioLock =
-      privateData
-        ?.waestudioLock ===
-      "true";
+      privateData?.waestudioLock === "true";
 
-    const existingExpiresAt =
-      Number(
-        privateData
-          ?.waestudioLockExpiresAt
-      );
+    const existingExpiresAt = Number(
+      privateData?.waestudioLockExpiresAt
+    );
 
     const isExpired =
       isWaestudioLock &&
-      Number.isFinite(
-        existingExpiresAt
-      ) &&
-      existingExpiresAt <
-        Date.now();
+      Number.isFinite(existingExpiresAt) &&
+      existingExpiresAt < Date.now();
 
     if (!isExpired) {
       return false;
@@ -488,24 +436,15 @@ async function insertLockEvent(
 
     await calendar.events.delete({
       calendarId,
-
-      eventId:
-        lock.eventId,
+      eventId: lock.eventId,
     });
 
-    /*
-     * Tras borrar un lock vencido intentamos
-     * adquirirlo una sola vez más.
-     */
     try {
       await insert();
-
       return true;
     } catch (retryError) {
       if (
-        getGoogleHttpStatus(
-          retryError
-        ) === 409
+        getGoogleHttpStatus(retryError) === 409
       ) {
         return false;
       }
@@ -513,16 +452,7 @@ async function insertLockEvent(
       throw retryError;
     }
   } catch (error) {
-    /*
-     * Si otro proceso modificó/eliminó el evento
-     * durante esta comprobación, tratamos el
-     * candado como no adquirido.
-     */
-    if (
-      getGoogleHttpStatus(
-        error
-      ) === 404
-    ) {
+    if (getGoogleHttpStatus(error) === 404) {
       return false;
     }
 
@@ -530,99 +460,97 @@ async function insertLockEvent(
   }
 }
 
+// ============================================================
+// LIBERACIÓN DE CANDADOS
+// ============================================================
+
 async function releaseCalendarLocks(
   locks: CalendarLock[]
-) {
-  if (
-    locks.length === 0
-  ) {
+): Promise<void> {
+  if (locks.length === 0) {
     return;
   }
 
-  const calendar =
-    createCalendarClient();
-
-  const calendarId =
-    getCalendarId();
+  const calendar = createCalendarClient();
+  const calendarId = getCalendarId();
 
   await Promise.allSettled(
-    locks.map(
-      async (lock) => {
-        try {
-          await calendar.events.delete({
-            calendarId,
-
-            eventId:
-              lock.eventId,
-          });
-        } catch (error) {
-          /*
-           * 404 es inofensivo:
-           * el lock ya no existe.
-           */
-          if (
-            getGoogleHttpStatus(
-              error
-            ) !== 404
-          ) {
-            console.error(
-              "No se pudo eliminar un lock temporal de Calendar:",
-              error
-            );
-          }
+    locks.map(async (lock) => {
+      try {
+        await calendar.events.delete({
+          calendarId,
+          eventId: lock.eventId,
+        });
+      } catch (error) {
+        if (getGoogleHttpStatus(error) !== 404) {
+          console.error(
+            "No se pudo eliminar un lock temporal de Calendar:",
+            error
+          );
         }
       }
-    )
+    })
   );
 }
+
+// ============================================================
+// ADQUISICIÓN DE CANDADOS
+// ============================================================
 
 async function acquireCalendarLocks(
   startsAt: Date,
   endsAt: Date
-) {
-  const requiredLocks =
-    buildLockBuckets(
-      startsAt,
-      endsAt
-    );
+): Promise<
+  | {
+      ok: true;
+      locks: CalendarLock[];
+    }
+  | {
+      ok: false;
+      locks: CalendarLock[];
+    }
+> {
+  const requiredLocks = buildLockBuckets(
+    startsAt,
+    endsAt
+  );
 
-  const acquiredLocks:
-    CalendarLock[] = [];
+  const acquiredLocks: CalendarLock[] = [];
 
-  for (
-    const lock of
-      requiredLocks
-  ) {
-    const acquired =
-      await insertLockEvent(
-        lock
-      );
+  try {
+    for (const lock of requiredLocks) {
+      const acquired =
+        await insertLockEvent(lock);
 
-    if (!acquired) {
-      await releaseCalendarLocks(
-        acquiredLocks
-      );
+      if (!acquired) {
+        await releaseCalendarLocks(
+          acquiredLocks
+        );
 
-      return {
-        ok: false as const,
+        return {
+          ok: false,
+          locks: [],
+        };
+      }
 
-        locks: [] as
-          CalendarLock[],
-      };
+      acquiredLocks.push(lock);
     }
 
-    acquiredLocks.push(
-      lock
-    );
+    return {
+      ok: true,
+      locks: acquiredLocks,
+    };
+  } catch (error) {
+    // Si Google falla durante el proceso,
+    // liberamos los candados adquiridos.
+    await releaseCalendarLocks(acquiredLocks);
+    throw error;
   }
-
-  return {
-    ok: true as const,
-
-    locks:
-      acquiredLocks,
-  };
 }
+
+// ============================================================
+// CREAR LA CITA DEFINITIVA
+// ============================================================
 
 async function createGoogleCalendarEvent({
   bookingCode,
@@ -635,154 +563,203 @@ async function createGoogleCalendarEvent({
   bookingCode: string;
   customerName: string;
   customerWhatsapp: string;
-  service:
-    (typeof SERVICES)[ServiceCode];
+  service: (typeof SERVICES)[ServiceCode];
   startsAt: Date;
   endsAt: Date;
 }) {
-  const calendar =
-    createCalendarClient();
+  const calendar = createCalendarClient();
 
   const eventId =
-    createCalendarEventId(
-      bookingCode
-    );
+    createCalendarEventId(bookingCode);
 
-  const response =
-    await calendar.events.insert({
-      calendarId:
-        getCalendarId(),
+  const response = await calendar.events.insert({
+    calendarId: getCalendarId(),
 
-      requestBody: {
-        id:
-          eventId,
+    requestBody: {
+      id: eventId,
 
-        summary:
-          `WAESTUDIO · ${customerName} · ${service.name}`,
+      summary:
+        `WAESTUDIO · ${customerName} · ${service.name}`,
 
-        description: [
-          `Cliente: ${customerName}`,
-          `WhatsApp: ${customerWhatsapp}`,
-          `Servicio: ${service.name}`,
-          `Código de cita: ${bookingCode}`,
-          "",
-          "Reserva creada automáticamente por WAESTUDIO.",
-        ].join("\n"),
+      description: [
+        `Cliente: ${customerName}`,
+        `WhatsApp: ${customerWhatsapp}`,
+        `Servicio: ${service.name}`,
+        `Código de cita: ${bookingCode}`,
+        "",
+        "Reserva creada automáticamente por WAESTUDIO.",
+      ].join("\n"),
 
-        start: {
-          dateTime:
-            startsAt.toISOString(),
+      start: {
+        dateTime: startsAt.toISOString(),
+        timeZone: GOOGLE_TIME_ZONE,
+      },
 
-          timeZone:
-            GOOGLE_TIME_ZONE,
-        },
+      end: {
+        dateTime: endsAt.toISOString(),
+        timeZone: GOOGLE_TIME_ZONE,
+      },
 
-        end: {
-          dateTime:
-            endsAt.toISOString(),
+      transparency: "opaque",
 
-          timeZone:
-            GOOGLE_TIME_ZONE,
-        },
-
-        transparency:
-          "opaque",
-
-        extendedProperties: {
-          private: {
-            waestudioBooking:
-              "true",
-
-            waestudioBookingCode:
-              bookingCode,
-
-            waestudioServiceCode:
-              service.code,
-
-            waestudioCustomerWhatsapp:
-              customerWhatsapp,
-          },
+      extendedProperties: {
+        private: {
+          waestudioBooking: "true",
+          waestudioBookingCode: bookingCode,
+          waestudioServiceCode: service.code,
+          waestudioCustomerWhatsapp:
+            customerWhatsapp,
         },
       },
-    });
+    },
+  });
 
   return {
-    eventId:
-      response.data.id ||
-      eventId,
-
-    htmlLink:
-      response.data.htmlLink ||
-      null,
+    eventId: response.data.id || eventId,
+    htmlLink: response.data.htmlLink || null,
   };
 }
 
-export async function POST(
-  request: Request
-) {
-  let acquiredLocks:
-    CalendarLock[] = [];
+// ============================================================
+// API POST /api/bookings
+// ============================================================
+
+export async function POST(request: Request) {
+  let acquiredLocks: CalendarLock[] = [];
 
   try {
-    const formData =
-      await request.formData();
+    // --------------------------------------------------------
+    // 1. COMPROBAR EL TAMAÑO DE LA SOLICITUD
+    // --------------------------------------------------------
 
-    const customerName =
-      getText(
-        formData,
-        "customerName"
-      );
-
-    const customerWhatsapp =
-      getText(
-        formData,
-        "customerWhatsapp"
-      );
-
-    const serviceCode =
-      getText(
-        formData,
-        "serviceCode"
-      );
-
-    const date =
-      getText(
-        formData,
-        "date"
-      );
-
-    const time =
-      getText(
-        formData,
-        "time"
-      );
-
-    const paymentMethod =
-      getText(
-        formData,
-        "paymentMethod"
-      );
-
-    const cashCurrency =
-      getText(
-        formData,
-        "cashCurrency"
-      ).toUpperCase();
-
-    /*
-     * =================================
-     * VALIDACIONES DEL CLIENTE
-     * =================================
-     */
+    const declaredLength = Number(
+      request.headers.get("content-length")
+    );
 
     if (
-      customerName.length <
-      2
+      Number.isFinite(declaredLength) &&
+      declaredLength > MAX_REQUEST_BYTES
     ) {
       return NextResponse.json(
         {
           ok: false,
+          message:
+            "El comprobante o los datos enviados son demasiado grandes. Utiliza una imagen más pequeña.",
+        },
+        {
+          status: 413,
+        }
+      );
+    }
 
+    const formData = await request.formData();
+
+    let fieldCount = 0;
+    let totalTextBytes = 0;
+    let fileCount = 0;
+
+    for (const [key, value] of formData.entries()) {
+      fieldCount += 1;
+
+      totalTextBytes += Buffer.byteLength(
+        key,
+        "utf8"
+      );
+
+      if (typeof value === "string") {
+        totalTextBytes += Buffer.byteLength(
+          value,
+          "utf8"
+        );
+      } else {
+        fileCount += 1;
+
+        if (
+          key !== "receipt" ||
+          value.size > MAX_RECEIPT_BYTES
+        ) {
+          return NextResponse.json(
+            {
+              ok: false,
+              message:
+                "El comprobante no es válido o supera el tamaño permitido.",
+            },
+            {
+              status: 413,
+            }
+          );
+        }
+      }
+    }
+
+    if (
+      fieldCount > MAX_FORM_FIELDS ||
+      totalTextBytes > MAX_TEXT_BYTES ||
+      fileCount > 1
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message:
+            "Los datos enviados exceden el límite permitido.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    // --------------------------------------------------------
+    // 2. OBTENER DATOS DEL FORMULARIO
+    // --------------------------------------------------------
+
+    const customerName = getText(
+      formData,
+      "customerName"
+    );
+
+    const customerWhatsapp = getText(
+      formData,
+      "customerWhatsapp"
+    );
+
+    const serviceCode = getText(
+      formData,
+      "serviceCode"
+    );
+
+    const date = getText(
+      formData,
+      "date"
+    );
+
+    const time = getText(
+      formData,
+      "time"
+    );
+
+    const paymentMethod = getText(
+      formData,
+      "paymentMethod"
+    );
+
+    const cashCurrency = getText(
+      formData,
+      "cashCurrency"
+    ).toUpperCase();
+
+    // --------------------------------------------------------
+    // 3. VALIDAR NOMBRE DEL CLIENTE
+    // --------------------------------------------------------
+
+    if (
+      customerName.length < 2 ||
+      customerName.length > 80 ||
+      /[\x00-\x1F\x7F]/.test(customerName)
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
           message:
             "El nombre del cliente no es válido.",
         },
@@ -792,20 +769,24 @@ export async function POST(
       );
     }
 
+    // --------------------------------------------------------
+    // 4. VALIDAR WHATSAPP
+    // --------------------------------------------------------
+
     const whatsappDigits =
-      customerWhatsapp.replace(
-        /\D/g,
-        ""
-      );
+      customerWhatsapp.replace(/\D/g, "");
 
     if (
-      whatsappDigits.length <
-      10
+      whatsappDigits.length < 10 ||
+      whatsappDigits.length > 15 ||
+      customerWhatsapp.length > 30 ||
+      !/^[+\d\s().-]+$/.test(
+        customerWhatsapp
+      )
     ) {
       return NextResponse.json(
         {
           ok: false,
-
           message:
             "El número de WhatsApp no es válido.",
         },
@@ -815,22 +796,16 @@ export async function POST(
       );
     }
 
-    /*
-     * =================================
-     * SERVICIO
-     * =================================
-     */
+    // --------------------------------------------------------
+    // 5. VALIDAR SERVICIO
+    // --------------------------------------------------------
 
     if (
-      !(
-        serviceCode in
-        SERVICES
-      )
+      !(serviceCode in SERVICES)
     ) {
       return NextResponse.json(
         {
           ok: false,
-
           message:
             "El servicio seleccionado no está disponible.",
         },
@@ -841,26 +816,86 @@ export async function POST(
     }
 
     const service =
-      SERVICES[
-        serviceCode as
-          ServiceCode
-      ];
+      SERVICES[serviceCode as ServiceCode];
 
-    /*
-     * =================================
-     * FECHA Y HORA
-     * =================================
-     */
+    // --------------------------------------------------------
+    // 6. VALIDAR MÉTODO DE PAGO
+    // --------------------------------------------------------
 
-    if (
-      !/^\d{4}-\d{2}-\d{2}$/.test(
-        date
-      )
-    ) {
+    if (!PAYMENT_METHODS.has(paymentMethod)) {
       return NextResponse.json(
         {
           ok: false,
+          message:
+            "El método de pago seleccionado no es válido.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
 
+    if (paymentMethod === "cash") {
+      if (!CASH_CURRENCIES.has(cashCurrency)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              "Selecciona la moneda para el pago en efectivo.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+    } else {
+      const payerBank = getText(
+        formData,
+        "payerBank"
+      );
+
+      const reference = getText(
+        formData,
+        "reference"
+      );
+
+      const referenceDigits =
+        reference.replace(/\D/g, "");
+
+      const receipt =
+        formData.get("receipt");
+
+      if (
+        payerBank.length < 2 ||
+        payerBank.length > 80 ||
+        /[\x00-\x1F\x7F]/.test(payerBank) ||
+        reference.length > 60 ||
+        referenceDigits.length < 4 ||
+        !receipt ||
+        typeof receipt === "string" ||
+        receipt.size === 0
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              "Completa los datos del pago y adjunta el comprobante.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+    }
+
+    // --------------------------------------------------------
+    // 7. VALIDAR FECHA
+    // --------------------------------------------------------
+
+    if (!isValidDate(date)) {
+      return NextResponse.json(
+        {
+          ok: false,
           message:
             "La fecha no es válida.",
         },
@@ -870,15 +905,14 @@ export async function POST(
       );
     }
 
-    if (
-      !/^\d{2}:\d{2}$/.test(
-        time
-      )
-    ) {
+    // --------------------------------------------------------
+    // 8. VALIDAR HORA
+    // --------------------------------------------------------
+
+    if (!/^\d{2}:\d{2}$/.test(time)) {
       return NextResponse.json(
         {
           ok: false,
-
           message:
             "La hora no es válida.",
         },
@@ -888,15 +922,10 @@ export async function POST(
       );
     }
 
-    if (
-      !ALLOWED_SLOTS.has(
-        time
-      )
-    ) {
+    if (!ALLOWED_SLOTS.has(time)) {
       return NextResponse.json(
         {
           ok: false,
-
           message:
             "La hora seleccionada no pertenece a los horarios disponibles de WAESTUDIO.",
         },
@@ -906,20 +935,16 @@ export async function POST(
       );
     }
 
-    const startsAt =
-      new Date(
-        `${date}T${time}:00${VENEZUELA_OFFSET}`
-      );
+    const startsAt = new Date(
+      `${date}T${time}:00${VENEZUELA_OFFSET}`
+    );
 
     if (
-      Number.isNaN(
-        startsAt.getTime()
-      )
+      Number.isNaN(startsAt.getTime())
     ) {
       return NextResponse.json(
         {
           ok: false,
-
           message:
             "La fecha de la reserva no es válida.",
         },
@@ -929,17 +954,15 @@ export async function POST(
       );
     }
 
-    if (
-      startsAt <=
-      new Date()
-    ) {
+    // --------------------------------------------------------
+    // 9. IMPEDIR RESERVAS EN EL PASADO
+    // --------------------------------------------------------
+
+    if (startsAt <= new Date()) {
       return NextResponse.json(
         {
           ok: false,
-
-          code:
-            "TIME_NOT_AVAILABLE",
-
+          code: "TIME_NOT_AVAILABLE",
           message:
             "Ese horario ya pasó. Selecciona otro horario.",
         },
@@ -949,22 +972,25 @@ export async function POST(
       );
     }
 
-    const dateForWeekday =
-      new Date(
-        `${date}T12:00:00${VENEZUELA_OFFSET}`
-      );
+    // --------------------------------------------------------
+    // 10. COMPROBAR EL DÍA DE LA SEMANA
+    // --------------------------------------------------------
 
+    const dateForWeekday = new Date(
+      `${date}T12:00:00${VENEZUELA_OFFSET}`
+    );
+
+    // Mediodía en Caracas = 16:00 UTC.
+    // Usamos getUTCDay para no depender
+    // de la zona horaria de Vercel.
     const weekday =
-      dateForWeekday.getDay();
+      dateForWeekday.getUTCDay();
 
     if (weekday === 0) {
       return NextResponse.json(
         {
           ok: false,
-
-          code:
-            "TIME_NOT_AVAILABLE",
-
+          code: "TIME_NOT_AVAILABLE",
           message:
             "WAESTUDIO no abre los domingos.",
         },
@@ -974,28 +1000,25 @@ export async function POST(
       );
     }
 
+    // --------------------------------------------------------
+    // 11. COMPROBAR HORARIO DE ATENCIÓN
+    // --------------------------------------------------------
+
     const startMinutes =
-      minutesFromTime(
-        time
-      );
+      minutesFromTime(time);
 
     const endMinutes =
       startMinutes +
       service.durationMinutes;
 
     if (
-      startMinutes <
-        BUSINESS_OPEN_MINUTES ||
-      endMinutes >
-        BUSINESS_CLOSE_MINUTES
+      startMinutes < BUSINESS_OPEN_MINUTES ||
+      endMinutes > BUSINESS_CLOSE_MINUTES
     ) {
       return NextResponse.json(
         {
           ok: false,
-
-          code:
-            "TIME_NOT_AVAILABLE",
-
+          code: "TIME_NOT_AVAILABLE",
           message:
             "El servicio no cabe dentro del horario de atención.",
         },
@@ -1005,19 +1028,14 @@ export async function POST(
       );
     }
 
-    const endsAt =
-      new Date(
-        startsAt.getTime() +
-          service.durationMinutes *
-            60 *
-            1000
-      );
+    const endsAt = new Date(
+      startsAt.getTime() +
+        service.durationMinutes * 60 * 1000
+    );
 
-    /*
-     * =================================
-     * PRIMERA COMPROBACIÓN FREE/BUSY
-     * =================================
-     */
+    // --------------------------------------------------------
+    // 12. PRIMERA CONSULTA DE DISPONIBILIDAD
+    // --------------------------------------------------------
 
     const initiallyBusy =
       await isGoogleCalendarBusy(
@@ -1029,10 +1047,7 @@ export async function POST(
       return NextResponse.json(
         {
           ok: false,
-
-          code:
-            "TIME_NOT_AVAILABLE",
-
+          code: "TIME_NOT_AVAILABLE",
           message:
             "Ese horario acaba de ser ocupado. Selecciona otro horario.",
         },
@@ -1042,27 +1057,9 @@ export async function POST(
       );
     }
 
-    /*
-     * =================================
-     * CANDADOS TEMPORALES
-     * =================================
-     *
-     * Los candados dividen la duración real
-     * del servicio en bloques de 15 minutos.
-     *
-     * Ejemplo:
-     * 09:00 + Premium (75 min)
-     * bloquea temporalmente:
-     * 09:00
-     * 09:15
-     * 09:30
-     * 09:45
-     * 10:00
-     *
-     * Otra solicitud que se solape deberá
-     * adquirir alguno de esos mismos IDs
-     * y Google Calendar la rechazará.
-     */
+    // --------------------------------------------------------
+    // 13. ADQUIRIR CANDADOS TEMPORALES
+    // --------------------------------------------------------
 
     const lockResult =
       await acquireCalendarLocks(
@@ -1074,10 +1071,7 @@ export async function POST(
       return NextResponse.json(
         {
           ok: false,
-
-          code:
-            "TIME_NOT_AVAILABLE",
-
+          code: "TIME_NOT_AVAILABLE",
           message:
             "Otro cliente está confirmando un horario que se cruza con esta cita. Selecciona otro horario o inténtalo nuevamente.",
         },
@@ -1087,22 +1081,11 @@ export async function POST(
       );
     }
 
-    acquiredLocks =
-      lockResult.locks;
+    acquiredLocks = lockResult.locks;
 
-    /*
-     * =================================
-     * SEGUNDA COMPROBACIÓN FREE/BUSY
-     * =================================
-     *
-     * Los locks son transparentes y no salen
-     * como BUSY. Por eso podemos volver a
-     * consultar Calendar después de obtenerlos.
-     *
-     * Esto cubre, por ejemplo, que el barbero
-     * haya creado un bloqueo manual justo
-     * durante el proceso de reserva.
-     */
+    // --------------------------------------------------------
+    // 14. SEGUNDA CONSULTA DE DISPONIBILIDAD
+    // --------------------------------------------------------
 
     const busyAfterLock =
       await isGoogleCalendarBusy(
@@ -1114,10 +1097,7 @@ export async function POST(
       return NextResponse.json(
         {
           ok: false,
-
-          code:
-            "TIME_NOT_AVAILABLE",
-
+          code: "TIME_NOT_AVAILABLE",
           message:
             "Ese horario acaba de ser ocupado. Selecciona otro horario.",
         },
@@ -1127,73 +1107,59 @@ export async function POST(
       );
     }
 
-    /*
-     * =================================
-     * CREAR CITA DEFINITIVA
-     * =================================
-     */
+    // --------------------------------------------------------
+    // 15. CREAR CITA DEFINITIVA
+    // --------------------------------------------------------
 
-    const bookingCode =
-      createBookingCode();
+    const bookingCode = createBookingCode();
 
     const calendarEvent =
       await createGoogleCalendarEvent({
         bookingCode,
-
         customerName,
-
         customerWhatsapp,
-
         service,
-
         startsAt,
-
         endsAt,
       });
 
-    const isCash =
-      paymentMethod ===
-      "cash";
+    const isCash = paymentMethod === "cash";
+
+    // --------------------------------------------------------
+    // 16. RESPUESTA AL CLIENTE
+    // --------------------------------------------------------
 
     return NextResponse.json(
       {
         ok: true,
 
-        source:
-          "google-calendar",
+        source: "google-calendar",
 
-        bookingId:
-          calendarEvent.eventId,
+        bookingId: calendarEvent.eventId,
 
         bookingCode,
 
         calendarEventId:
           calendarEvent.eventId,
 
-        calendarCreated:
-          true,
+        calendarCreated: true,
 
         paymentMethod:
-          paymentMethod ||
-          null,
+          paymentMethod || null,
 
-        cashCurrency:
-          isCash
-            ? cashCurrency ||
-              null
-            : null,
+        cashCurrency: isCash
+          ? cashCurrency || null
+          : null,
 
-        status:
-          isCash
-            ? "cash_pending"
-            : "payment_reported",
+        status: isCash
+          ? "cash_pending"
+          : "payment_reported",
 
         message:
           "Reserva realizada. La cita fue agregada al calendario.",
       },
       {
         status: 201,
-
         headers: {
           "Cache-Control":
             "no-store, max-age=0",
@@ -1209,7 +1175,6 @@ export async function POST(
     return NextResponse.json(
       {
         ok: false,
-
         message:
           "No fue posible crear la cita en Google Calendar.",
       },
@@ -1218,14 +1183,10 @@ export async function POST(
       }
     );
   } finally {
-    /*
-     * Los candados son siempre temporales.
-     *
-     * La cita definitiva ya es un evento
-     * opaque y será la que bloquee FreeBusy.
-     */
-    await releaseCalendarLocks(
-      acquiredLocks
-    );
+    // Los candados se liberan al terminar,
+    // independientemente del resultado.
+    // La cita confirmada permanece en Google Calendar.
+
+    await releaseCalendarLocks(acquiredLocks);
   }
 }
