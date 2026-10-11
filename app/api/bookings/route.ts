@@ -6,24 +6,15 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// ============================================================
-// CONFIGURACIÓN GENERAL DE WAESTUDIO
-// ============================================================
-
 const GOOGLE_TIME_ZONE = "America/Caracas";
 const VENEZUELA_OFFSET = "-04:00";
 
 const BUSINESS_OPEN_MINUTES = 9 * 60;
 const BUSINESS_CLOSE_MINUTES = 18 * 60;
 
-// Los candados temporales protegen intervalos de 15 minutos.
 const LOCK_BUCKET_MINUTES = 15;
-
-// Un candado abandonado se considera vencido después de 2 min.
 const LOCK_TTL_MS = 2 * 60 * 1000;
 
-// Límites de formularios.
-// La imagen no se almacena en esta API.
 const MAX_REQUEST_BYTES = 4_000_000;
 const MAX_FORM_FIELDS = 16;
 const MAX_TEXT_BYTES = 2_000;
@@ -61,7 +52,6 @@ const SERVICES = {
     priceUsd: 7,
     durationMinutes: 45,
   },
-
   premium: {
     code: "premium",
     name: "Experiencia Premium",
@@ -78,21 +68,15 @@ type CalendarLock = {
   endsAt: Date;
 };
 
-// ============================================================
-// FUNCIONES DE VALIDACIÓN
-// ============================================================
-
 function getText(
   formData: FormData,
   key: string
 ): string {
   const value = formData.get(key);
 
-  if (typeof value !== "string") {
-    return "";
-  }
-
-  return value.trim();
+  return typeof value === "string"
+    ? value.trim()
+    : "";
 }
 
 function isValidDate(value: string): boolean {
@@ -137,19 +121,12 @@ function minutesFromTime(time: string): number {
   return hours * 60 + minutes;
 }
 
-// ============================================================
-// CONEXIÓN CON GOOGLE CALENDAR
-// ============================================================
-
 function createGoogleOAuthClient() {
   const clientId = process.env.GOOGLE_CLIENT_ID;
-
   const clientSecret =
     process.env.GOOGLE_CLIENT_SECRET;
-
   const redirectUri =
     process.env.GOOGLE_REDIRECT_URI;
-
   const refreshToken =
     process.env.GOOGLE_REFRESH_TOKEN;
 
@@ -185,12 +162,11 @@ function createCalendarClient() {
 }
 
 function getCalendarId(): string {
-  return process.env.GOOGLE_CALENDAR_ID || "primary";
+  return (
+    process.env.GOOGLE_CALENDAR_ID ||
+    "primary"
+  );
 }
-
-// ============================================================
-// CÓDIGOS E IDENTIFICADORES
-// ============================================================
 
 function createBookingCode(): string {
   return `WAE-${randomBytes(3)
@@ -236,7 +212,8 @@ function getGoogleHttpStatus(
   };
 
   if (
-    typeof candidate.response?.status === "number"
+    typeof candidate.response?.status ===
+    "number"
   ) {
     return candidate.response.status;
   }
@@ -247,10 +224,6 @@ function getGoogleHttpStatus(
     ? numericCode
     : null;
 }
-
-// ============================================================
-// CONSTRUCCIÓN DE CANDADOS TEMPORALES
-// ============================================================
 
 function buildLockBuckets(
   startsAt: Date,
@@ -285,10 +258,6 @@ function buildLockBuckets(
   return locks;
 }
 
-// ============================================================
-// CONSULTA DE DISPONIBILIDAD EN GOOGLE CALENDAR
-// ============================================================
-
 async function isGoogleCalendarBusy(
   startsAt: Date,
   endsAt: Date
@@ -309,11 +278,8 @@ async function isGoogleCalendarBusy(
   });
 
   const calendars = response.data.calendars || {};
-
   const results = Object.values(calendars);
 
-  // Nunca interpretar una respuesta sin calendario
-  // como si todos los horarios estuvieran libres.
   if (results.length !== 1) {
     throw new Error(
       "Google Calendar no devolvió el calendario solicitado."
@@ -346,17 +312,14 @@ async function isGoogleCalendarBusy(
   return calendarData.busy.length > 0;
 }
 
-// ============================================================
-// CREAR UN CANDADO EN GOOGLE CALENDAR
-// ============================================================
-
 async function insertLockEvent(
   lock: CalendarLock
 ): Promise<boolean> {
   const calendar = createCalendarClient();
   const calendarId = getCalendarId();
 
-  const expiresAt = Date.now() + LOCK_TTL_MS;
+  const expiresAt =
+    Date.now() + LOCK_TTL_MS;
 
   const insert = async () => {
     await calendar.events.insert({
@@ -367,8 +330,6 @@ async function insertLockEvent(
         summary:
           "WAESTUDIO · Reserva en proceso",
 
-        // Los candados no aparecen como ocupado en
-        // FreeBusy. Se coordinan por su ID único.
         transparency: "transparent",
         visibility: "private",
 
@@ -401,14 +362,11 @@ async function insertLockEvent(
     await insert();
     return true;
   } catch (error) {
-    // 409: el identificador ya existe.
     if (getGoogleHttpStatus(error) !== 409) {
       throw error;
     }
   }
 
-  // Si el candado existente está vencido,
-  // intentamos recuperarlo.
   try {
     const existing = await calendar.events.get({
       calendarId,
@@ -444,7 +402,8 @@ async function insertLockEvent(
       return true;
     } catch (retryError) {
       if (
-        getGoogleHttpStatus(retryError) === 409
+        getGoogleHttpStatus(retryError) ===
+        409
       ) {
         return false;
       }
@@ -459,10 +418,6 @@ async function insertLockEvent(
     throw error;
   }
 }
-
-// ============================================================
-// LIBERACIÓN DE CANDADOS
-// ============================================================
 
 async function releaseCalendarLocks(
   locks: CalendarLock[]
@@ -493,23 +448,10 @@ async function releaseCalendarLocks(
   );
 }
 
-// ============================================================
-// ADQUISICIÓN DE CANDADOS
-// ============================================================
-
 async function acquireCalendarLocks(
   startsAt: Date,
   endsAt: Date
-): Promise<
-  | {
-      ok: true;
-      locks: CalendarLock[];
-    }
-  | {
-      ok: false;
-      locks: CalendarLock[];
-    }
-> {
+) {
   const requiredLocks = buildLockBuckets(
     startsAt,
     endsAt
@@ -528,8 +470,8 @@ async function acquireCalendarLocks(
         );
 
         return {
-          ok: false,
-          locks: [],
+          ok: false as const,
+          locks: [] as CalendarLock[],
         };
       }
 
@@ -537,20 +479,14 @@ async function acquireCalendarLocks(
     }
 
     return {
-      ok: true,
+      ok: true as const,
       locks: acquiredLocks,
     };
   } catch (error) {
-    // Si Google falla durante el proceso,
-    // liberamos los candados adquiridos.
     await releaseCalendarLocks(acquiredLocks);
     throw error;
   }
 }
-
-// ============================================================
-// CREAR LA CITA DEFINITIVA
-// ============================================================
 
 async function createGoogleCalendarEvent({
   bookingCode,
@@ -620,18 +556,10 @@ async function createGoogleCalendarEvent({
   };
 }
 
-// ============================================================
-// API POST /api/bookings
-// ============================================================
-
 export async function POST(request: Request) {
   let acquiredLocks: CalendarLock[] = [];
 
   try {
-    // --------------------------------------------------------
-    // 1. COMPROBAR EL TAMAÑO DE LA SOLICITUD
-    // --------------------------------------------------------
-
     const declaredLength = Number(
       request.headers.get("content-length")
     );
@@ -646,9 +574,7 @@ export async function POST(request: Request) {
           message:
             "El comprobante o los datos enviados son demasiado grandes. Utiliza una imagen más pequeña.",
         },
-        {
-          status: 413,
-        }
+        { status: 413 }
       );
     }
 
@@ -684,9 +610,7 @@ export async function POST(request: Request) {
               message:
                 "El comprobante no es válido o supera el tamaño permitido.",
             },
-            {
-              status: 413,
-            }
+            { status: 413 }
           );
         }
       }
@@ -703,15 +627,9 @@ export async function POST(request: Request) {
           message:
             "Los datos enviados exceden el límite permitido.",
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
-
-    // --------------------------------------------------------
-    // 2. OBTENER DATOS DEL FORMULARIO
-    // --------------------------------------------------------
 
     const customerName = getText(
       formData,
@@ -748,9 +666,7 @@ export async function POST(request: Request) {
       "cashCurrency"
     ).toUpperCase();
 
-    // --------------------------------------------------------
-    // 3. VALIDAR NOMBRE DEL CLIENTE
-    // --------------------------------------------------------
+    // VALIDAR CLIENTE
 
     if (
       customerName.length < 2 ||
@@ -763,15 +679,9 @@ export async function POST(request: Request) {
           message:
             "El nombre del cliente no es válido.",
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
-
-    // --------------------------------------------------------
-    // 4. VALIDAR WHATSAPP
-    // --------------------------------------------------------
 
     const whatsappDigits =
       customerWhatsapp.replace(/\D/g, "");
@@ -780,9 +690,7 @@ export async function POST(request: Request) {
       whatsappDigits.length < 10 ||
       whatsappDigits.length > 15 ||
       customerWhatsapp.length > 30 ||
-      !/^[+\d\s().-]+$/.test(
-        customerWhatsapp
-      )
+      !/^[+\d\s().-]+$/.test(customerWhatsapp)
     ) {
       return NextResponse.json(
         {
@@ -790,37 +698,53 @@ export async function POST(request: Request) {
           message:
             "El número de WhatsApp no es válido.",
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
 
-    // --------------------------------------------------------
-    // 5. VALIDAR SERVICIO
-    // --------------------------------------------------------
+    // VALIDAR SERVICIO
 
-    if (
-      !(serviceCode in SERVICES)
-    ) {
+    if (!(serviceCode in SERVICES)) {
       return NextResponse.json(
         {
           ok: false,
           message:
             "El servicio seleccionado no está disponible.",
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
 
     const service =
       SERVICES[serviceCode as ServiceCode];
 
-    // --------------------------------------------------------
-    // 6. VALIDAR MÉTODO DE PAGO
-    // --------------------------------------------------------
+    // =====================================================
+    // EXPERIENCIA PREMIUM: PRÓXIMAMENTE
+    // =====================================================
+    //
+    // Mantenemos Premium en el catálogo, pero impedimos
+    // reservarlo desde la API hasta que se active.
+    // Esto protege también contra llamadas directas.
+    //
+    // Para activarlo en el futuro, revisaremos tanto
+    // esta regla como la pantalla de selección.
+    // =====================================================
+
+    if (service.code === "premium") {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: "SERVICE_NOT_AVAILABLE",
+          message:
+            "Experiencia Premium estará disponible próximamente.",
+        },
+        {
+          status: 409,
+        }
+      );
+    }
+
+    // VALIDAR PAGO
 
     if (!PAYMENT_METHODS.has(paymentMethod)) {
       return NextResponse.json(
@@ -829,9 +753,7 @@ export async function POST(request: Request) {
           message:
             "El método de pago seleccionado no es válido.",
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
 
@@ -843,9 +765,7 @@ export async function POST(request: Request) {
             message:
               "Selecciona la moneda para el pago en efectivo.",
           },
-          {
-            status: 400,
-          }
+          { status: 400 }
         );
       }
     } else {
@@ -862,8 +782,7 @@ export async function POST(request: Request) {
       const referenceDigits =
         reference.replace(/\D/g, "");
 
-      const receipt =
-        formData.get("receipt");
+      const receipt = formData.get("receipt");
 
       if (
         payerBank.length < 2 ||
@@ -881,44 +800,32 @@ export async function POST(request: Request) {
             message:
               "Completa los datos del pago y adjunta el comprobante.",
           },
-          {
-            status: 400,
-          }
+          { status: 400 }
         );
       }
     }
 
-    // --------------------------------------------------------
-    // 7. VALIDAR FECHA
-    // --------------------------------------------------------
+    // VALIDAR FECHA
 
     if (!isValidDate(date)) {
       return NextResponse.json(
         {
           ok: false,
-          message:
-            "La fecha no es válida.",
+          message: "La fecha no es válida.",
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
 
-    // --------------------------------------------------------
-    // 8. VALIDAR HORA
-    // --------------------------------------------------------
+    // VALIDAR HORA
 
     if (!/^\d{2}:\d{2}$/.test(time)) {
       return NextResponse.json(
         {
           ok: false,
-          message:
-            "La hora no es válida.",
+          message: "La hora no es válida.",
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
 
@@ -929,9 +836,7 @@ export async function POST(request: Request) {
           message:
             "La hora seleccionada no pertenece a los horarios disponibles de WAESTUDIO.",
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
 
@@ -939,24 +844,16 @@ export async function POST(request: Request) {
       `${date}T${time}:00${VENEZUELA_OFFSET}`
     );
 
-    if (
-      Number.isNaN(startsAt.getTime())
-    ) {
+    if (Number.isNaN(startsAt.getTime())) {
       return NextResponse.json(
         {
           ok: false,
           message:
             "La fecha de la reserva no es válida.",
         },
-        {
-          status: 400,
-        }
+        { status: 400 }
       );
     }
-
-    // --------------------------------------------------------
-    // 9. IMPEDIR RESERVAS EN EL PASADO
-    // --------------------------------------------------------
 
     if (startsAt <= new Date()) {
       return NextResponse.json(
@@ -966,23 +863,14 @@ export async function POST(request: Request) {
           message:
             "Ese horario ya pasó. Selecciona otro horario.",
         },
-        {
-          status: 409,
-        }
+        { status: 409 }
       );
     }
-
-    // --------------------------------------------------------
-    // 10. COMPROBAR EL DÍA DE LA SEMANA
-    // --------------------------------------------------------
 
     const dateForWeekday = new Date(
       `${date}T12:00:00${VENEZUELA_OFFSET}`
     );
 
-    // Mediodía en Caracas = 16:00 UTC.
-    // Usamos getUTCDay para no depender
-    // de la zona horaria de Vercel.
     const weekday =
       dateForWeekday.getUTCDay();
 
@@ -994,22 +882,17 @@ export async function POST(request: Request) {
           message:
             "WAESTUDIO no abre los domingos.",
         },
-        {
-          status: 409,
-        }
+        { status: 409 }
       );
     }
 
-    // --------------------------------------------------------
-    // 11. COMPROBAR HORARIO DE ATENCIÓN
-    // --------------------------------------------------------
+    // VALIDAR HORARIO LABORAL
 
     const startMinutes =
       minutesFromTime(time);
 
     const endMinutes =
-      startMinutes +
-      service.durationMinutes;
+      startMinutes + service.durationMinutes;
 
     if (
       startMinutes < BUSINESS_OPEN_MINUTES ||
@@ -1022,9 +905,7 @@ export async function POST(request: Request) {
           message:
             "El servicio no cabe dentro del horario de atención.",
         },
-        {
-          status: 409,
-        }
+        { status: 409 }
       );
     }
 
@@ -1033,9 +914,7 @@ export async function POST(request: Request) {
         service.durationMinutes * 60 * 1000
     );
 
-    // --------------------------------------------------------
-    // 12. PRIMERA CONSULTA DE DISPONIBILIDAD
-    // --------------------------------------------------------
+    // PRIMERA COMPROBACIÓN DE DISPONIBILIDAD
 
     const initiallyBusy =
       await isGoogleCalendarBusy(
@@ -1051,15 +930,11 @@ export async function POST(request: Request) {
           message:
             "Ese horario acaba de ser ocupado. Selecciona otro horario.",
         },
-        {
-          status: 409,
-        }
+        { status: 409 }
       );
     }
 
-    // --------------------------------------------------------
-    // 13. ADQUIRIR CANDADOS TEMPORALES
-    // --------------------------------------------------------
+    // ADQUIRIR CANDADOS TEMPORALES
 
     const lockResult =
       await acquireCalendarLocks(
@@ -1075,17 +950,13 @@ export async function POST(request: Request) {
           message:
             "Otro cliente está confirmando un horario que se cruza con esta cita. Selecciona otro horario o inténtalo nuevamente.",
         },
-        {
-          status: 409,
-        }
+        { status: 409 }
       );
     }
 
     acquiredLocks = lockResult.locks;
 
-    // --------------------------------------------------------
-    // 14. SEGUNDA CONSULTA DE DISPONIBILIDAD
-    // --------------------------------------------------------
+    // SEGUNDA COMPROBACIÓN DE DISPONIBILIDAD
 
     const busyAfterLock =
       await isGoogleCalendarBusy(
@@ -1101,15 +972,11 @@ export async function POST(request: Request) {
           message:
             "Ese horario acaba de ser ocupado. Selecciona otro horario.",
         },
-        {
-          status: 409,
-        }
+        { status: 409 }
       );
     }
 
-    // --------------------------------------------------------
-    // 15. CREAR CITA DEFINITIVA
-    // --------------------------------------------------------
+    // CREAR CITA DEFINITIVA
 
     const bookingCode = createBookingCode();
 
@@ -1125,18 +992,12 @@ export async function POST(request: Request) {
 
     const isCash = paymentMethod === "cash";
 
-    // --------------------------------------------------------
-    // 16. RESPUESTA AL CLIENTE
-    // --------------------------------------------------------
-
     return NextResponse.json(
       {
         ok: true,
-
         source: "google-calendar",
 
         bookingId: calendarEvent.eventId,
-
         bookingCode,
 
         calendarEventId:
@@ -1144,8 +1005,7 @@ export async function POST(request: Request) {
 
         calendarCreated: true,
 
-        paymentMethod:
-          paymentMethod || null,
+        paymentMethod: paymentMethod || null,
 
         cashCurrency: isCash
           ? cashCurrency || null
@@ -1183,10 +1043,6 @@ export async function POST(request: Request) {
       }
     );
   } finally {
-    // Los candados se liberan al terminar,
-    // independientemente del resultado.
-    // La cita confirmada permanece en Google Calendar.
-
     await releaseCalendarLocks(acquiredLocks);
   }
 }

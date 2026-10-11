@@ -1,26 +1,13 @@
+
 import { google } from "googleapis";
-import {
-  NextRequest,
-  NextResponse,
-} from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/*
- * Zona horaria de WAESTUDIO.
- *
- * Venezuela utiliza UTC-4 durante todo el año.
- */
 const GOOGLE_TIME_ZONE = "America/Caracas";
 const VENEZUELA_OFFSET = "-04:00";
 
-/*
- * Horarios que actualmente utiliza la interfaz.
- *
- * Mismos horarios que acepta la API de reservas.
- * La pantalla principal usa únicamente "Reservar cita".
- */
 const CANDIDATE_SLOTS = [
   "09:00",
   "09:45",
@@ -35,16 +22,6 @@ const CANDIDATE_SLOTS = [
   "17:00",
 ];
 
-/*
- * Horario fijo de WAESTUDIO.
- *
- * 0 = domingo
- * 1 = lunes
- * ...
- * 6 = sábado
- *
- * Ya no se consulta Supabase para obtener el horario.
- */
 const BUSINESS_HOURS: Record<
   number,
   {
@@ -90,24 +67,15 @@ const BUSINESS_HOURS: Record<
   },
 };
 
-/*
- * Servicios de WAESTUDIO.
- *
- * Ya no se consulta Supabase para conocer la duración
- * de cada servicio.
- */
-const SERVICES = [
+// Solo Corte Esencial está habilitado.
+// Premium aparecerá en la interfaz como "Próximamente".
+const ENABLED_SERVICES = [
   {
     code: "essential",
     name: "Corte Esencial",
     durationMinutes: 45,
   },
-  {
-    code: "premium",
-    name: "Experiencia Premium",
-    durationMinutes: 75,
-  },
-];
+] as const;
 
 type BusyPeriod = {
   start: string;
@@ -138,12 +106,11 @@ function createGoogleOAuthClient() {
     );
   }
 
-  const oauth2Client =
-    new google.auth.OAuth2(
-      clientId,
-      clientSecret,
-      redirectUri
-    );
+  const oauth2Client = new google.auth.OAuth2(
+    clientId,
+    clientSecret,
+    redirectUri
+  );
 
   oauth2Client.setCredentials({
     refresh_token: refreshToken,
@@ -152,8 +119,9 @@ function createGoogleOAuthClient() {
   return oauth2Client;
 }
 
-function isValidDate(value: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+function isValidDate(value: string): boolean {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
 
   if (!match) {
     return false;
@@ -163,8 +131,6 @@ function isValidDate(value: string) {
   const month = Number(match[2]);
   const day = Number(match[3]);
 
-  // Verificación real del calendario, incluyendo años bisiestos.
-  // Evita que fechas inexistentes se normalicen a otros días.
   if (
     year < 2020 ||
     year > 2100 ||
@@ -176,7 +142,9 @@ function isValidDate(value: string) {
     return false;
   }
 
-  const parsed = new Date(Date.UTC(year, month - 1, day));
+  const parsed = new Date(
+    Date.UTC(year, month - 1, day)
+  );
 
   return (
     parsed.getUTCFullYear() === year &&
@@ -188,7 +156,7 @@ function isValidDate(value: string) {
 function localDateTime(
   date: string,
   time: string
-) {
+): Date {
   return new Date(
     `${date}T${time}:00${VENEZUELA_OFFSET}`
   );
@@ -196,7 +164,7 @@ function localDateTime(
 
 function minutesFromTime(
   time: string
-) {
+): number {
   const [hours, minutes] = time
     .split(":")
     .map(Number);
@@ -206,13 +174,12 @@ function minutesFromTime(
 
 function timeFromMinutes(
   totalMinutes: number
-) {
+): string {
   const hours = Math.floor(
     totalMinutes / 60
   );
 
-  const minutes =
-    totalMinutes % 60;
+  const minutes = totalMinutes % 60;
 
   return `${String(hours).padStart(
     2,
@@ -225,20 +192,15 @@ function timeFromMinutes(
 
 function formatTime12Hour(
   time: string
-) {
+): string {
   const [hoursText, minutes] =
     time.split(":");
 
-  const hours =
-    Number(hoursText);
+  const hours = Number(hoursText);
 
-  const suffix =
-    hours >= 12 ? "PM" : "AM";
-
-  const displayHour =
-    hours % 12 || 12;
-
-  return `${displayHour}:${minutes} ${suffix}`;
+  return `${hours % 12 || 12}:${minutes} ${
+    hours >= 12 ? "PM" : "AM"
+  }`;
 }
 
 function overlaps(
@@ -246,83 +208,63 @@ function overlaps(
   endA: Date,
   startB: Date,
   endB: Date
-) {
-  return (
-    startA < endB &&
-    endA > startB
-  );
+): boolean {
+  return startA < endB && endA > startB;
 }
 
 async function getBusyPeriods(
   date: string
 ): Promise<BusyPeriod[]> {
-  const auth =
-    createGoogleOAuthClient();
-
-  const calendar =
-    google.calendar({
-      version: "v3",
-      auth,
-    });
+  const calendar = google.calendar({
+    version: "v3",
+    auth: createGoogleOAuthClient(),
+  });
 
   const calendarId =
     process.env.GOOGLE_CALENDAR_ID ||
     "primary";
 
-  const dayStart =
-    new Date(
-      `${date}T00:00:00${VENEZUELA_OFFSET}`
-    );
+  const dayStart = new Date(
+    `${date}T00:00:00${VENEZUELA_OFFSET}`
+  );
 
-  const dayEnd =
-    new Date(
-      `${date}T23:59:59.999${VENEZUELA_OFFSET}`
-    );
+  const dayEnd = new Date(
+    `${date}T23:59:59.999${VENEZUELA_OFFSET}`
+  );
 
-  const response =
-    await calendar.freebusy.query({
-      requestBody: {
-        timeMin:
-          dayStart.toISOString(),
-
-        timeMax:
-          dayEnd.toISOString(),
-
-        timeZone:
-          GOOGLE_TIME_ZONE,
-
-        items: [
-          {
-            id: calendarId,
-          },
-        ],
-      },
-    });
+  const response = await calendar.freebusy.query({
+    requestBody: {
+      timeMin: dayStart.toISOString(),
+      timeMax: dayEnd.toISOString(),
+      timeZone: GOOGLE_TIME_ZONE,
+      items: [
+        {
+          id: calendarId,
+        },
+      ],
+    },
+  });
 
   const calendars =
     response.data.calendars || {};
 
-  const calendarResults =
+  const results =
     Object.values(calendars);
 
-  // No devolver horarios libres si Google no informa del calendario.
-  // Solo consultamos uno: una respuesta vacía/incompleta es un error.
-  if (calendarResults.length !== 1) {
+  if (results.length !== 1) {
     throw new Error(
-      "Google Calendar no devolvió datos del calendario solicitado."
+      "Google Calendar no devolvió el calendario solicitado."
     );
   }
 
-  const calendarErrors =
-    calendarResults.flatMap(
-      (calendarData) =>
-        calendarData.errors || []
-    );
+  const calendarData = results[0];
 
-  if (calendarErrors.length > 0) {
+  if (
+    (calendarData.errors || []).length > 0
+  ) {
     console.error(
       "Google Calendar freebusy errors:",
-      calendarErrors
+      calendarData.errors
     );
 
     throw new Error(
@@ -330,38 +272,43 @@ async function getBusyPeriods(
     );
   }
 
-  return calendarResults.flatMap(
-    (calendarData) =>
-      (calendarData.busy || [])
-        .filter(
-          (
-            busy
-          ): busy is {
-            start: string;
-            end: string;
-          } =>
-            typeof busy.start ===
-              "string" &&
-            typeof busy.end ===
-              "string"
-        )
-        .map((busy) => ({
-          start: busy.start,
-          end: busy.end,
-        }))
-  );
+  if (!Array.isArray(calendarData.busy)) {
+    throw new Error(
+      "Google Calendar devolvió información incompleta."
+    );
+  }
+
+  const periods: BusyPeriod[] = [];
+
+  for (const busy of calendarData.busy) {
+    if (
+      typeof busy.start !== "string" ||
+      typeof busy.end !== "string" ||
+      Number.isNaN(Date.parse(busy.start)) ||
+      Number.isNaN(Date.parse(busy.end))
+    ) {
+      throw new Error(
+        "Google Calendar devolvió un intervalo ocupado inválido."
+      );
+    }
+
+    periods.push({
+      start: busy.start,
+      end: busy.end,
+    });
+  }
+
+  return periods;
 }
 
 export async function GET(
   request: NextRequest
 ) {
   try {
-    const { searchParams } =
-      new URL(request.url);
-
     const date =
-      searchParams.get("date")?.trim() ||
-      "";
+      request.nextUrl.searchParams
+        .get("date")
+        ?.trim() || "";
 
     if (!isValidDate(date)) {
       return NextResponse.json(
@@ -376,43 +323,13 @@ export async function GET(
       );
     }
 
-    /*
-     * Utilizamos mediodía para determinar correctamente
-     * el día de la semana sin problemas por zona horaria.
-     */
-    const dateForWeekday =
-      new Date(
-        `${date}T12:00:00${VENEZUELA_OFFSET}`
-      );
+    const dateForWeekday = new Date(
+      `${date}T12:00:00${VENEZUELA_OFFSET}`
+    );
 
-    if (
-      Number.isNaN(
-        dateForWeekday.getTime()
-      )
-    ) {
-      return NextResponse.json(
-        {
-          ok: false,
-          message:
-            "La fecha indicada no es válida.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    // Mediodía de Caracas equivale a las 16:00 UTC.
-    // getUTCDay es independiente del huso horario del servidor.
     const weekday =
       dateForWeekday.getUTCDay();
 
-    /*
-     * HORARIO DEL NEGOCIO
-     *
-     * Ahora se obtiene de configuración local,
-     * no de Supabase.
-     */
     const workingHours =
       BUSINESS_HOURS[weekday];
 
@@ -425,21 +342,13 @@ export async function GET(
       return NextResponse.json(
         {
           ok: true,
-
-          source:
-            "google-calendar",
-
+          source: "google-calendar",
           date,
-
           weekday,
-
           isOpen: false,
-
           openTime: null,
           closeTime: null,
-
           slots: [],
-
           busyPeriodsCount: 0,
         },
         {
@@ -457,188 +366,112 @@ export async function GET(
     const closeTime =
       workingHours.closeTime;
 
-    /*
-     * GOOGLE CALENDAR
-     *
-     * Cualquier intervalo que Google Calendar devuelva
-     * como BUSY se considera ocupado.
-     *
-     * Esto incluye:
-     * - citas creadas automáticamente por WAESTUDIO
-     * - bloqueos manuales creados por el barbero
-     * - otros eventos configurados como "ocupado"
-     */
-    const busyPeriods =
-      await getBusyPeriods(date);
-
-    /*
-     * GENERAR DISPONIBILIDAD
-     */
     const openMinutes =
       minutesFromTime(openTime);
 
     const closeMinutes =
       minutesFromTime(closeTime);
 
+    const busyPeriods =
+      await getBusyPeriods(date);
+
     const now = new Date();
 
-    const slots =
-      CANDIDATE_SLOTS.map(
-        (slotTime) => {
-          const slotMinutes =
-            minutesFromTime(
-              slotTime
-            );
+    const slots = CANDIDATE_SLOTS.map(
+      (slotTime) => {
+        const slotMinutes =
+          minutesFromTime(slotTime);
 
-          /*
-           * El horario debe encontrarse dentro
-           * de la jornada laboral.
-           */
-          if (
-            slotMinutes <
-              openMinutes ||
-            slotMinutes >=
-              closeMinutes
-          ) {
-            return null;
-          }
+        if (
+          slotMinutes < openMinutes ||
+          slotMinutes >= closeMinutes
+        ) {
+          return null;
+        }
 
-          const slotStart =
-            localDateTime(
-              date,
-              slotTime
-            );
+        const slotStart =
+          localDateTime(date, slotTime);
 
-          /*
-           * Una hora pasada ya no puede reservarse.
-           */
-          if (slotStart <= now) {
-            return {
-              time: slotTime,
+        const label =
+          formatTime12Hour(slotTime);
 
-              label:
-                formatTime12Hour(
-                  slotTime
-                ),
-
-              available: false,
-
-              availableServices: [],
-
-              reason: "past",
-            };
-          }
-
-          const availableServices =
-            SERVICES.filter(
-              (service) => {
-                const serviceEndMinutes =
-                  slotMinutes +
-                  service.durationMinutes;
-
-                /*
-                 * El servicio debe terminar
-                 * antes del cierre.
-                 */
-                if (
-                  serviceEndMinutes >
-                  closeMinutes
-                ) {
-                  return false;
-                }
-
-                const serviceEnd =
-                  localDateTime(
-                    date,
-                    timeFromMinutes(
-                      serviceEndMinutes
-                    )
-                  );
-
-                /*
-                 * Comprobar conflictos con Google Calendar.
-                 *
-                 * Si cualquier parte del servicio se superpone
-                 * con un intervalo BUSY, ese servicio no puede
-                 * reservarse en esa hora.
-                 */
-                const calendarConflict =
-                  busyPeriods.some(
-                    (period) => {
-                      const busyStart =
-                        new Date(
-                          period.start
-                        );
-
-                      const busyEnd =
-                        new Date(
-                          period.end
-                        );
-
-                      return overlaps(
-                        slotStart,
-                        serviceEnd,
-                        busyStart,
-                        busyEnd
-                      );
-                    }
-                  );
-
-                return !calendarConflict;
-              }
-            );
-
+        if (slotStart <= now) {
           return {
             time: slotTime,
-
-            label:
-              formatTime12Hour(
-                slotTime
-              ),
-
-            available:
-              availableServices.length >
-              0,
-
-            availableServices:
-              availableServices.map(
-                (service) =>
-                  service.code
-              ),
-
-            reason:
-              availableServices.length >
-              0
-                ? null
-                : "occupied",
+            label,
+            available: false,
+            availableServices: [] as string[],
+            reason: "past",
           };
         }
-      ).filter(
-        (
-          slot
-        ): slot is NonNullable<
-          typeof slot
-        > => slot !== null
-      );
+
+        const availableServices =
+          ENABLED_SERVICES.filter(
+            (service) => {
+              const serviceEndMinutes =
+                slotMinutes +
+                service.durationMinutes;
+
+              if (
+                serviceEndMinutes >
+                closeMinutes
+              ) {
+                return false;
+              }
+
+              const serviceEnd =
+                localDateTime(
+                  date,
+                  timeFromMinutes(
+                    serviceEndMinutes
+                  )
+                );
+
+              return !busyPeriods.some(
+                (period) =>
+                  overlaps(
+                    slotStart,
+                    serviceEnd,
+                    new Date(period.start),
+                    new Date(period.end)
+                  )
+              );
+            }
+          );
+
+        const available =
+          availableServices.length > 0;
+
+        return {
+          time: slotTime,
+          label,
+          available,
+          availableServices:
+            availableServices.map(
+              (service) => service.code
+            ),
+          reason: available
+            ? null
+            : "occupied",
+        };
+      }
+    ).filter(
+      (
+        slot
+      ): slot is NonNullable<typeof slot> =>
+        slot !== null
+    );
 
     return NextResponse.json(
       {
         ok: true,
-
-        source:
-          "google-calendar",
-
+        source: "google-calendar",
         date,
-
         weekday,
-
         isOpen: true,
-
         openTime,
         closeTime,
-
         slots,
-
         busyPeriodsCount:
           busyPeriods.length,
       },
@@ -658,7 +491,6 @@ export async function GET(
     return NextResponse.json(
       {
         ok: false,
-
         message:
           "No fue posible consultar la disponibilidad en Google Calendar.",
       },

@@ -782,6 +782,7 @@ export default function Home() {
   const visibleServices =
     services.filter(
       (service) =>
+        service.id === "premium" ||
         selectedAvailableServices.includes(
           service.id
         )
@@ -975,6 +976,7 @@ export default function Home() {
     service: Service
   ) {
     if (
+      service.id === "premium" ||
       !selectedAvailableServices.includes(
         service.id
       )
@@ -1387,7 +1389,7 @@ export default function Home() {
 
                     <div className="min-w-0 flex-1">
                       <p className="text-[9px] font-medium uppercase tracking-[0.22em] text-[#c5a66d]">
-                        Acceso rápido
+                        APLICACIÓN WAESTUDIO
                       </p>
 
                       <p className="mt-1 text-sm font-medium text-[#f5f1e8]">
@@ -1395,7 +1397,7 @@ export default function Home() {
                       </p>
 
                       <p className="mt-1 text-[11px] leading-4 text-white/35">
-                        Reserva desde tu pantalla de inicio como una app.
+                        Instala la app en tu teléfono y reserva tus citas desde ella.
                       </p>
                     </div>
 
@@ -1430,7 +1432,7 @@ export default function Home() {
                         },
                       }}
                     >
-                      Instalar
+                      Instalar app
                     </Button>
                   </div>
 
@@ -1777,6 +1779,9 @@ export default function Home() {
               <div className="mt-9 space-y-4">
                 {visibleServices.map(
                   (service) => {
+                    const isComingSoon =
+                      service.id === "premium";
+
                     const serviceVes =
                       bcvRate !==
                       null
@@ -1790,13 +1795,18 @@ export default function Home() {
                         key={
                           service.id
                         }
+                        disabled={isComingSoon}
                         onClick={() =>
                           selectService(
                             service
                           )
                         }
                         onPointerDown={triggerTapFeedback}
-                        className="w-full touch-manipulation select-none rounded-[28px] border border-white/10 bg-white/[0.035] p-6 text-left transition-all duration-100 ease-out active:translate-y-[2px] active:scale-[0.97] active:border-[#c5a66d]/70 active:bg-[#c5a66d]/10 active:shadow-[inset_0_3px_12px_rgba(0,0,0,0.32)]"
+                        className={`w-full touch-manipulation select-none rounded-[28px] border p-6 text-left transition-all duration-100 ease-out ${
+                          isComingSoon
+                            ? "cursor-not-allowed border-[#c5a66d]/20 bg-white/[0.025] opacity-70"
+                            : "border-white/10 bg-white/[0.035] active:translate-y-[2px] active:scale-[0.97] active:border-[#c5a66d]/70 active:bg-[#c5a66d]/10 active:shadow-[inset_0_3px_12px_rgba(0,0,0,0.32)]"
+                        }`}
                       >
                         <div className="flex items-start justify-between gap-6">
                           <div>
@@ -1812,10 +1822,16 @@ export default function Home() {
                               }
                             </h3>
 
+                            {isComingSoon && (
+                              <span className="mt-3 inline-flex rounded-full border border-[#c5a66d]/40 bg-[#c5a66d]/[0.08] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#c5a66d]">
+                                Próximamente
+                              </span>
+                            )}
+
                             <p className="mt-2 text-xs leading-5 text-white/35">
-                              {
-                                service.description
-                              }
+                              {isComingSoon
+                                ? "Este servicio aún no está disponible para reservar."
+                                : service.description}
                             </p>
                           </div>
 
