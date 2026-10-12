@@ -1007,6 +1007,12 @@ export default function Home() {
     setStep(
       "paymentDetails"
     );
+
+    // Consultar nuevamente el BCV al entrar
+    // en Pago Móvil.
+    if (method === "mobile") {
+      void retryBcvRate();
+    }
   }
 
   function handleReceipt(
@@ -1104,6 +1110,51 @@ export default function Home() {
           formData.append(
             "receipt",
             receipt
+          );
+        }
+      }
+
+      // Antes de confirmar un Pago Móvil,
+      // comprobar la última tasa disponible.
+      if (paymentMethod === "mobile") {
+        const latestResponse = await fetch(
+          `/api/bcv?t=${Date.now()}`,
+          {
+            cache: "no-store",
+          }
+        );
+
+        if (!latestResponse.ok) {
+          throw new Error(
+            "No se pudo verificar la tasa BCV. Inténtalo nuevamente antes de confirmar."
+          );
+        }
+
+        const latestData: BcvApiResponse =
+          await latestResponse.json();
+
+        if (
+          !latestData.ok ||
+          typeof latestData.rate !== "number" ||
+          !Number.isFinite(latestData.rate) ||
+          latestData.rate <= 0
+        ) {
+          throw new Error(
+            "La tasa BCV no está disponible. No podemos confirmar este Pago Móvil todavía."
+          );
+        }
+
+        // Si cambió, actualizar la pantalla y
+        // detener esta confirmación.
+        if (
+          typeof bcvRate !== "number" ||
+          Math.abs(latestData.rate - bcvRate) > 0.000001
+        ) {
+          setBcvRate(latestData.rate);
+          setBcvDate(latestData.date);
+
+          throw new Error(
+            "La tasa BCV se actualizó. Revisa el nuevo monto en bolívares antes de confirmar tu reserva."
           );
         }
       }
