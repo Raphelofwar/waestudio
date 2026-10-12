@@ -1,12 +1,10 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
-import {
-  FiDownload,
-  FiShare2,
-} from "react-icons/fi";
+import { FiDownload } from "react-icons/fi";
+import { SiWhatsapp } from "react-icons/si";
 
 type BookingTicketProps = {
   bookingCode: string;
@@ -15,14 +13,35 @@ type BookingTicketProps = {
   appointmentDate: Date;
   appointmentTime: string;
   priceUsd: number;
+
+  customerWhatsapp?: string;
+  paymentMethod?: "mobile" | "cash" | "transfer" | null;
+  cashCurrency?: string | null;
+  payerBank?: string;
+  paymentReference?: string;
+  bcvRate?: number | null;
+  amountVes?: number | null;
 };
+
+type TicketData = Omit<
+  BookingTicketProps,
+  "appointmentDate"
+> & {
+  dateText: string;
+};
+
+type TicketField = {
+  label: string;
+  value: string;
+};
+
+const BARBER_WHATSAPP = "584121237187";
 
 const GOLD = "#c5a66d";
 const WHITE = "#f5f1e8";
 const BACKGROUND = "#090909";
 
 const TICKET_WIDTH = 1080;
-const TICKET_HEIGHT = 1700;
 
 function formatDate(date: Date) {
   return date.toLocaleDateString("es-VE", {
@@ -33,7 +52,154 @@ function formatDate(date: Date) {
   });
 }
 
-function drawRoundedRect(
+function formatUsd(amount: number) {
+  return `$${amount.toFixed(2)} USD`;
+}
+
+function formatVes(amount: number) {
+  return `Bs. ${amount.toLocaleString("es-VE", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function getPaymentLabel(data: TicketData) {
+  if (data.paymentMethod === "mobile") {
+    return "Pago Móvil";
+  }
+
+  if (data.paymentMethod === "cash") {
+    return data.cashCurrency
+      ? `Efectivo ${data.cashCurrency}`
+      : "Efectivo";
+  }
+
+  if (data.paymentMethod === "transfer") {
+    return "Transferencia";
+  }
+
+  return null;
+}
+
+function getAmountVes(data: TicketData) {
+  if (
+    typeof data.amountVes === "number" &&
+    Number.isFinite(data.amountVes) &&
+    data.amountVes > 0
+  ) {
+    return data.amountVes;
+  }
+
+  if (
+    typeof data.bcvRate === "number" &&
+    Number.isFinite(data.bcvRate) &&
+    data.bcvRate > 0
+  ) {
+    return data.priceUsd * data.bcvRate;
+  }
+
+  return null;
+}
+
+function buildFields(data: TicketData): TicketField[] {
+  const fields: TicketField[] = [
+    {
+      label: "CLIENTE",
+      value: data.customerName,
+    },
+  ];
+
+  if (data.customerWhatsapp?.trim()) {
+    fields.push({
+      label: "TELÉFONO",
+      value: data.customerWhatsapp.trim(),
+    });
+  }
+
+  fields.push(
+    {
+      label: "SERVICIO",
+      value: data.serviceName,
+    },
+    {
+      label: "FECHA",
+      value: data.dateText,
+    },
+    {
+      label: "HORA",
+      value: data.appointmentTime,
+    },
+    {
+      label: "PRECIO",
+      value: formatUsd(data.priceUsd),
+    }
+  );
+
+  const paymentLabel = getPaymentLabel(data);
+
+  if (paymentLabel) {
+    fields.push({
+      label: "MÉTODO DE PAGO",
+      value: paymentLabel,
+    });
+  }
+
+  if (data.paymentMethod === "mobile") {
+    const amountVes = getAmountVes(data);
+
+    if (amountVes !== null) {
+      fields.push({
+        label: "MONTO EN BOLÍVARES",
+        value: formatVes(amountVes),
+      });
+    }
+
+    if (data.payerBank?.trim()) {
+      fields.push({
+        label: "BANCO DEL CLIENTE",
+        value: data.payerBank.trim(),
+      });
+    }
+
+    if (data.paymentReference?.trim()) {
+      fields.push({
+        label: "REFERENCIA REPORTADA",
+        value: data.paymentReference.trim(),
+      });
+    }
+  }
+
+  return fields;
+}
+
+function buildWhatsAppMessage(data: TicketData) {
+  const fields = buildFields(data);
+
+  const lines = [
+    "✂️ WAESTUDIO | NUEVA RESERVA",
+    "",
+    ...fields.map(
+      (field) => `${field.label}: ${field.value}`
+    ),
+    "",
+    `CÓDIGO DE CITA: ${data.bookingCode}`,
+    "",
+    "Cita registrada en WAESTUDIO.",
+  ];
+
+  return lines.join("\n");
+}
+
+function getWhatsAppUrl(data: TicketData) {
+  return (
+    `https://wa.me/${BARBER_WHATSAPP}?text=` +
+    encodeURIComponent(
+      buildWhatsAppMessage(data)
+    )
+  );
+}
+
+function roundedRect(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
@@ -42,110 +208,279 @@ function drawRoundedRect(
   radius: number
 ) {
   ctx.beginPath();
-
   ctx.moveTo(x + radius, y);
-
-  ctx.lineTo(
-    x + width - radius,
-    y
-  );
-
+  ctx.lineTo(x + width - radius, y);
   ctx.quadraticCurveTo(
     x + width,
     y,
     x + width,
     y + radius
   );
-
-  ctx.lineTo(
-    x + width,
-    y + height - radius
-  );
-
+  ctx.lineTo(x + width, y + height - radius);
   ctx.quadraticCurveTo(
     x + width,
     y + height,
     x + width - radius,
     y + height
   );
-
-  ctx.lineTo(
-    x + radius,
-    y + height
-  );
-
+  ctx.lineTo(x + radius, y + height);
   ctx.quadraticCurveTo(
     x,
     y + height,
     x,
     y + height - radius
   );
-
-  ctx.lineTo(
-    x,
-    y + radius
-  );
-
-  ctx.quadraticCurveTo(
-    x,
-    y,
-    x + radius,
-    y
-  );
-
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
   ctx.closePath();
 }
 
-function fitFont(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  maxWidth: number,
-  initialSize: number,
-  minSize = 22,
-  weight = "500"
-) {
-  let size = initialSize;
-
-  ctx.font =
-    `${weight} ${size}px Arial, sans-serif`;
-
-  while (
-    size > minSize &&
-    ctx.measureText(text).width > maxWidth
-  ) {
-    size -= 2;
-
-    ctx.font =
-      `${weight} ${size}px Arial, sans-serif`;
-  }
-
-  return size;
-}
-
-function drawDivider(
+function divider(
   ctx: CanvasRenderingContext2D,
   y: number
 ) {
   ctx.beginPath();
-
   ctx.moveTo(145, y);
   ctx.lineTo(935, y);
-
-  ctx.strokeStyle =
-    "rgba(197,166,109,0.28)";
-
+  ctx.strokeStyle = "rgba(197,166,109,0.28)";
   ctx.lineWidth = 2;
   ctx.stroke();
 }
 
-async function loadLogo() {
-  const logo = new window.Image();
+function drawFittedText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  width: number,
+  preferredSize: number,
+  weight = "500"
+) {
+  let size = preferredSize;
 
-  logo.src = "/waestudio-app-512.png";
+  while (size > 21) {
+    ctx.font = `${weight} ${size}px Arial, sans-serif`;
 
-  await logo.decode();
+    if (ctx.measureText(text).width <= width) {
+      break;
+    }
 
-  return logo;
+    size -= 2;
+  }
+
+  ctx.fillText(text, x, y, width);
+}
+
+async function createTicketFile(
+  data: TicketData
+): Promise<File> {
+  const fields = buildFields(data);
+
+  const footerY = Math.max(
+    1480,
+    860 + (fields.length - 1) * 118 + 140
+  );
+
+  const height = footerY + 220;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = TICKET_WIDTH;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d");
+
+  if (!ctx) {
+    throw new Error(
+      "No se pudo generar el comprobante."
+    );
+  }
+
+  // Fondo
+  ctx.fillStyle = BACKGROUND;
+  ctx.fillRect(0, 0, TICKET_WIDTH, height);
+
+  // Tarjeta principal
+  roundedRect(
+    ctx,
+    48,
+    48,
+    984,
+    height - 96,
+    40
+  );
+
+  ctx.fillStyle = "#111111";
+  ctx.fill();
+
+  ctx.strokeStyle = "rgba(197,166,109,0.45)";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Logo
+  try {
+    const logo = new window.Image();
+    logo.src = "/waestudio-app-512.png";
+    await logo.decode();
+
+    ctx.drawImage(
+      logo,
+      430,
+      110,
+      220,
+      220
+    );
+  } catch (error) {
+    console.warn(
+      "No se pudo cargar el logo:",
+      error
+    );
+  }
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = GOLD;
+  ctx.font = "600 30px Arial, sans-serif";
+  ctx.fillText("WAESTUDIO", 540, 380);
+
+  ctx.fillStyle = "#8c8983";
+  ctx.font = "22px Arial, sans-serif";
+  ctx.fillText("MEN'S GROOMING", 540, 425);
+
+  divider(ctx, 470);
+
+  ctx.fillStyle = WHITE;
+  ctx.font = "600 46px Arial, sans-serif";
+  ctx.fillText(
+    "CITA REGISTRADA",
+    540,
+    550
+  );
+
+  ctx.fillStyle = "#a7a29a";
+  ctx.font = "24px Arial, sans-serif";
+  ctx.fillText(
+    "Tu código de reserva",
+    540,
+    617
+  );
+
+  roundedRect(
+    ctx,
+    135,
+    665,
+    810,
+    140,
+    24
+  );
+
+  ctx.fillStyle = "rgba(197,166,109,0.09)";
+  ctx.fill();
+
+  ctx.strokeStyle = GOLD;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.fillStyle = GOLD;
+  ctx.textAlign = "center";
+
+  drawFittedText(
+    ctx,
+    data.bookingCode,
+    540,
+    755,
+    710,
+    55,
+    "700"
+  );
+
+  // Datos de la cita
+  fields.forEach((field, index) => {
+    const y = 860 + index * 118;
+
+    ctx.textAlign = "left";
+    ctx.fillStyle = GOLD;
+    ctx.font = "600 21px Arial, sans-serif";
+    ctx.fillText(
+      field.label,
+      145,
+      y
+    );
+
+    ctx.fillStyle = WHITE;
+
+    drawFittedText(
+      ctx,
+      field.value,
+      145,
+      y + 48,
+      790,
+      34
+    );
+  });
+
+  // Pie del comprobante
+  divider(ctx, footerY);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#a7a29a";
+  ctx.font = "24px Arial, sans-serif";
+
+  ctx.fillText(
+    "Presenta tu código al llegar",
+    540,
+    footerY + 65
+  );
+
+  ctx.font = "20px Arial, sans-serif";
+
+  ctx.fillText(
+    "Este comprobante confirma la cita, no el pago.",
+    540,
+    footerY + 115
+  );
+
+  const blob = await new Promise<Blob>(
+    (resolve, reject) => {
+      canvas.toBlob(
+        (result) => {
+          if (result) {
+            resolve(result);
+          } else {
+            reject(
+              new Error(
+                "No se pudo preparar la imagen PNG."
+              )
+            );
+          }
+        },
+        "image/png",
+        1
+      );
+    }
+  );
+
+  return new File(
+    [blob],
+    `WAESTUDIO-${data.bookingCode}.png`,
+    {
+      type: "image/png",
+    }
+  );
+}
+
+function saveTicket(file: File) {
+  const url = URL.createObjectURL(file);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = file.name;
+
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 10000);
 }
 
 export default function BookingTicket({
@@ -155,335 +490,162 @@ export default function BookingTicket({
   appointmentDate,
   appointmentTime,
   priceUsd,
+  customerWhatsapp,
+  paymentMethod,
+  cashCurrency,
+  payerBank,
+  paymentReference,
+  bcvRate,
+  amountVes,
 }: BookingTicketProps) {
+  const [ticketFile, setTicketFile] =
+    useState<File | null>(null);
+
   const [busy, setBusy] =
     useState(false);
 
   const [message, setMessage] =
     useState<string | null>(null);
 
-  const dateText =
-    formatDate(appointmentDate);
+  const dateText = formatDate(appointmentDate);
 
-  async function generateTicket(): Promise<Blob> {
-    const canvas =
-      document.createElement("canvas");
+  const data: TicketData = {
+    bookingCode,
+    customerName,
+    serviceName,
+    dateText,
+    appointmentTime,
+    priceUsd,
+    customerWhatsapp,
+    paymentMethod,
+    cashCurrency,
+    payerBank,
+    paymentReference,
+    bcvRate,
+    amountVes,
+  };
 
-    canvas.width = TICKET_WIDTH;
-    canvas.height = TICKET_HEIGHT;
+  const fields = buildFields(data);
 
-    const ctx =
-      canvas.getContext("2d");
+  // Preparar la imagen al mostrar la reserva.
+  // Así el botón de compartir puede abrir
+  // inmediatamente el menú del teléfono.
+  useEffect(() => {
+    let cancelled = false;
 
-    if (!ctx) {
-      throw new Error(
-        "No se pudo preparar la imagen del ticket."
-      );
+    async function prepare() {
+      setTicketFile(null);
+
+      try {
+        const file = await createTicketFile({
+          bookingCode,
+          customerName,
+          serviceName,
+          dateText,
+          appointmentTime,
+          priceUsd,
+          customerWhatsapp,
+          paymentMethod,
+          cashCurrency,
+          payerBank,
+          paymentReference,
+          bcvRate,
+          amountVes,
+        });
+
+        if (!cancelled) {
+          setTicketFile(file);
+        }
+      } catch (error) {
+        console.error(
+          "Error preparando comprobante:",
+          error
+        );
+
+        if (!cancelled) {
+          setMessage(
+            "No se pudo preparar el comprobante."
+          );
+        }
+      }
     }
 
-    // Fondo general
-    ctx.fillStyle = BACKGROUND;
+    void prepare();
 
-    ctx.fillRect(
-      0,
-      0,
-      TICKET_WIDTH,
-      TICKET_HEIGHT
-    );
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    bookingCode,
+    customerName,
+    serviceName,
+    dateText,
+    appointmentTime,
+    priceUsd,
+    customerWhatsapp,
+    paymentMethod,
+    cashCurrency,
+    payerBank,
+    paymentReference,
+    bcvRate,
+    amountVes,
+  ]);
 
-    // Tarjeta principal
-    drawRoundedRect(
-      ctx,
-      48,
-      48,
-      984,
-      1604,
-      40
-    );
-
-    ctx.fillStyle = "#111111";
-    ctx.fill();
-
-    ctx.strokeStyle =
-      "rgba(197,166,109,0.45)";
-
-    ctx.lineWidth = 3;
-    ctx.stroke();
-
-    // Logotipo
-    try {
-      const logo =
-        await loadLogo();
-
-      ctx.drawImage(
-        logo,
-        430,
-        110,
-        220,
-        220
-      );
-    } catch (error) {
-      console.warn(
-        "No se pudo cargar el logo del ticket:",
-        error
-      );
-    }
-
-    // Nombre de la barbería
-    ctx.textAlign = "center";
-
-    ctx.fillStyle = GOLD;
-
-    ctx.font =
-      "600 30px Arial, sans-serif";
-
-    ctx.fillText(
-      "WAESTUDIO",
-      540,
-      380
-    );
-
-    ctx.fillStyle = "#8c8983";
-
-    ctx.font =
-      "22px Arial, sans-serif";
-
-    ctx.fillText(
-      "MEN'S GROOMING",
-      540,
-      425
-    );
-
-    drawDivider(ctx, 470);
-
-    // Encabezado de reserva
-    ctx.fillStyle = WHITE;
-
-    ctx.font =
-      "600 46px Arial, sans-serif";
-
-    ctx.fillText(
-      "CITA REGISTRADA",
-      540,
-      550
-    );
-
-    ctx.fillStyle = "#a7a29a";
-
-    ctx.font =
-      "24px Arial, sans-serif";
-
-    ctx.fillText(
-      "Tu código de reserva",
-      540,
-      617
-    );
-
-    // Recuadro del código
-    drawRoundedRect(
-      ctx,
-      135,
-      665,
-      810,
-      140,
-      24
-    );
-
-    ctx.fillStyle =
-      "rgba(197,166,109,0.09)";
-
-    ctx.fill();
-
-    ctx.strokeStyle = GOLD;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    ctx.fillStyle = GOLD;
-
-    ctx.textAlign = "center";
-
-    fitFont(
-      ctx,
-      bookingCode,
-      710,
-      55,
-      24,
-      "700"
-    );
-
-    ctx.fillText(
-      bookingCode,
-      540,
-      755
-    );
-
-    // Datos de la reserva
-    const fields = [
-      {
-        label: "CLIENTE",
-        value: customerName,
-      },
-      {
-        label: "SERVICIO",
-        value: serviceName,
-      },
-      {
-        label: "FECHA",
-        value: dateText,
-      },
-      {
-        label: "HORA",
-        value: appointmentTime,
-      },
-      {
-        label: "PRECIO",
-        value: `$${priceUsd} USD`,
-      },
-    ];
-
-    const firstFieldY = 860;
-    const fieldSpacing = 120;
-
-    fields.forEach(
-      (field, index) => {
-        const y =
-          firstFieldY +
-          index * fieldSpacing;
-
-        ctx.textAlign = "left";
-
-        ctx.fillStyle = GOLD;
-
-        ctx.font =
-          "600 21px Arial, sans-serif";
-
-        ctx.fillText(
-          field.label,
-          145,
-          y
-        );
-
-        ctx.fillStyle = WHITE;
-
-        fitFont(
-          ctx,
-          field.value,
-          790,
-          34,
-          22,
-          "500"
-        );
-
-        ctx.fillText(
-          field.value,
-          145,
-          y + 48
-        );
-      }
-    );
-
-    // Separación inferior
-    drawDivider(ctx, 1480);
-
-    // Indicaciones del ticket
-    ctx.textAlign = "center";
-
-    ctx.fillStyle = "#a7a29a";
-
-    ctx.font =
-      "24px Arial, sans-serif";
-
-    ctx.fillText(
-      "Presenta tu código al llegar",
-      540,
-      1545
-    );
-
-    ctx.font =
-      "20px Arial, sans-serif";
-
-    ctx.fillText(
-      "Este ticket confirma tu reserva, no el pago.",
-      540,
-      1590
-    );
-
-    // Exportación a PNG
-    return new Promise<Blob>(
-      (resolve, reject) => {
-        canvas.toBlob(
-          (blob) => {
-            if (blob) {
-              resolve(blob);
-            } else {
-              reject(
-                new Error(
-                  "No se pudo generar el ticket."
-                )
-              );
-            }
-          },
-          "image/png",
-          1
-        );
-      }
-    );
-  }
-
-  async function downloadTicket() {
-    if (busy) {
+  function downloadTicket() {
+    if (!ticketFile || busy) {
       return;
     }
 
-    setBusy(true);
-    setMessage(null);
-
     try {
-      const blob =
-        await generateTicket();
-
-      const url =
-        URL.createObjectURL(blob);
-
-      const link =
-        document.createElement("a");
-
-      link.href = url;
-
-      link.download =
-        `WAESTUDIO-${bookingCode}.png`;
-
-      document.body.appendChild(link);
-
-      link.click();
-      link.remove();
-
-      window.setTimeout(
-        () => {
-          URL.revokeObjectURL(url);
-        },
-        1000
-      );
+      saveTicket(ticketFile);
 
       setMessage(
-        "El ticket está listo para guardar. Revisa las descargas de tu dispositivo."
+        "Comprobante preparado. Revisa las descargas de tu dispositivo."
       );
     } catch (error) {
       console.error(
-        "Error descargando ticket:",
+        "Error descargando comprobante:",
         error
       );
 
       setMessage(
-        "No fue posible guardar el ticket."
+        "No fue posible descargar el comprobante."
       );
-    } finally {
-      setBusy(false);
     }
   }
 
-  async function shareTicket() {
-    if (busy) {
+  function openWhatsAppFallback(file: File) {
+    // Descargar la imagen para adjuntarla
+    // manualmente en dispositivos sin Web Share.
+    saveTicket(file);
+
+    setMessage(
+      "Adjunta en WhatsApp la imagen PNG que se descargó."
+    );
+
+    window.location.assign(
+      getWhatsAppUrl(data)
+    );
+  }
+
+  async function sendToBarber() {
+    if (!ticketFile || busy) {
+      return;
+    }
+
+    const file = ticketFile;
+
+    const canShareImage =
+      typeof navigator.share === "function" &&
+      typeof navigator.canShare === "function" &&
+      navigator.canShare({
+        files: [file],
+      });
+
+    // Alternativa para dispositivos sin
+    // capacidad de compartir archivos PNG.
+    if (!canShareImage) {
+      openWhatsAppFallback(file);
       return;
     }
 
@@ -491,56 +653,38 @@ export default function BookingTicket({
     setMessage(null);
 
     try {
-      const blob =
-        await generateTicket();
+      await navigator.share({
+        files: [file],
+        title: "WAESTUDIO | Comprobante de cita",
+        text: [
+          buildWhatsAppMessage(data),
+          "",
+          "Enviar al WhatsApp del barbero:",
+          "+58 412-1237187",
+        ].join("\n"),
+      });
 
-      const file =
-        new File(
-          [blob],
-          `WAESTUDIO-${bookingCode}.png`,
-          {
-            type: "image/png",
-          }
-        );
-
-      const canShareFiles =
-        typeof navigator.share ===
-          "function" &&
-        typeof navigator.canShare ===
-          "function" &&
-        navigator.canShare({
-          files: [file],
-        });
-
-      if (canShareFiles) {
-        await navigator.share({
-          files: [file],
-          title:
-            "Mi cita en WAESTUDIO",
-          text:
-            `Reserva WAESTUDIO: ${bookingCode}`,
-        });
-      } else {
-        setMessage(
-          "Este dispositivo no permite compartir la imagen directamente. Usa Guardar ticket y compártela desde tu galería."
-        );
-      }
+      setMessage(
+        "Comprueba que hayas enviado el comprobante al WhatsApp del barbero."
+      );
     } catch (error) {
       if (
         error instanceof DOMException &&
         error.name === "AbortError"
       ) {
-        return;
+        setMessage(
+          "Se cerró la opción de compartir. Puedes intentarlo nuevamente."
+        );
+      } else {
+        console.error(
+          "Error compartiendo comprobante:",
+          error
+        );
+
+        setMessage(
+          "No se pudo compartir la imagen. Puedes descargarla y enviarla manualmente por WhatsApp."
+        );
       }
-
-      console.error(
-        "Error compartiendo ticket:",
-        error
-      );
-
-      setMessage(
-        "No fue posible compartir el ticket."
-      );
     } finally {
       setBusy(false);
     }
@@ -549,8 +693,7 @@ export default function BookingTicket({
   return (
     <section className="mt-7">
       <div className="overflow-hidden rounded-[28px] border border-[#c5a66d]/35 bg-[#111111] p-5">
-
-        {/* Logotipo */}
+        {/* Logo */}
         <div className="flex flex-col items-center text-center">
           <div className="relative h-20 w-20">
             <Image
@@ -571,15 +714,14 @@ export default function BookingTicket({
           </p>
         </div>
 
-        {/* Código de reserva */}
+        {/* Código */}
         <div className="mt-6 border-t border-[#c5a66d]/20 pt-6 text-center">
-
           <p className="text-[10px] uppercase tracking-[0.2em] text-[#c5a66d]">
             Cita registrada
           </p>
 
           <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[#f5f1e8]">
-            Tu ticket
+            Tu comprobante
           </h3>
 
           <p className="mt-2 text-xs text-white/40">
@@ -593,96 +735,69 @@ export default function BookingTicket({
           </div>
         </div>
 
-        {/* Detalles de la cita */}
+        {/* Información */}
         <div className="mt-6 space-y-4 border-t border-white/10 pt-5 text-sm">
+          {fields.map((field) => (
+            <div
+              key={field.label}
+              className="flex justify-between gap-4"
+            >
+              <span className="shrink-0 text-white/35">
+                {field.label}
+              </span>
 
-          <div className="flex justify-between gap-4">
-            <span className="text-white/35">
-              Cliente
-            </span>
-
-            <span className="text-right text-[#f5f1e8]">
-              {customerName}
-            </span>
-          </div>
-
-          <div className="flex justify-between gap-4">
-            <span className="text-white/35">
-              Servicio
-            </span>
-
-            <span className="text-right text-[#f5f1e8]">
-              {serviceName}
-            </span>
-          </div>
-
-          <div className="flex justify-between gap-4">
-            <span className="text-white/35">
-              Fecha
-            </span>
-
-            <span className="text-right capitalize text-[#f5f1e8]">
-              {dateText}
-            </span>
-          </div>
-
-          <div className="flex justify-between gap-4">
-            <span className="text-white/35">
-              Hora
-            </span>
-
-            <span className="text-right text-[#f5f1e8]">
-              {appointmentTime}
-            </span>
-          </div>
-
-          <div className="flex justify-between gap-4 border-t border-white/10 pt-4">
-            <span className="text-white/35">
-              Precio
-            </span>
-
-            <span className="font-semibold text-[#f5f1e8]">
-              ${priceUsd} USD
-            </span>
-          </div>
+              <span className="min-w-0 break-words text-right text-[#f5f1e8]">
+                {field.value}
+              </span>
+            </div>
+          ))}
         </div>
 
-        {/* Nota informativa */}
         <p className="mt-6 border-t border-white/10 pt-4 text-center text-[10px] leading-5 text-white/35">
           Presenta tu código al llegar.
-          Este ticket confirma el registro
-          de tu cita, no la recepción del pago.
+          Este comprobante confirma el registro
+          de tu cita, no el pago.
         </p>
       </div>
 
-      {/* Acciones */}
-      <div className="mt-4 grid grid-cols-2 gap-3">
-
+      {/* Únicamente dos botones */}
+      <div className="mt-4 flex flex-col gap-3">
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || !ticketFile}
           onClick={downloadTicket}
-          className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-[#f5f1e8] px-3 text-xs font-semibold text-[#090909] transition active:scale-[0.97] disabled:opacity-50"
+          className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#f5f1e8] px-4 text-sm font-semibold text-[#090909] transition active:scale-[0.97] disabled:opacity-50"
         >
-          <FiDownload size={16} />
-          Guardar ticket
+          <FiDownload size={18} />
+          Descargar comprobante
         </button>
 
         <button
           type="button"
-          disabled={busy}
-          onClick={shareTicket}
-          className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-[#c5a66d]/40 bg-[#c5a66d]/[0.06] px-3 text-xs font-semibold text-[#c5a66d] transition active:scale-[0.97] disabled:opacity-50"
+          disabled={busy || !ticketFile}
+          onClick={sendToBarber}
+          className="flex min-h-14 w-full items-center justify-center gap-3 rounded-2xl bg-[#c5a66d] px-4 text-sm font-semibold text-[#090909] transition active:scale-[0.97] disabled:opacity-50"
         >
-          <FiShare2 size={16} />
-          Compartir
+          <SiWhatsapp size={20} />
+          Enviar al barbero por WhatsApp
         </button>
       </div>
+
+      <p className="mt-3 text-center text-[11px] leading-5 text-white/40">
+        Selecciona WhatsApp y envía la imagen
+        al barbero: 0412-1237187.
+      </p>
+
+      {!ticketFile && !message && (
+        <p className="mt-3 text-center text-xs text-white/40">
+          Preparando comprobante...
+        </p>
+      )}
 
       {message && (
         <p
           role="status"
-          className="mt-3 text-center text-xs leading-5 text-white/50"
+          className="mt-3 text-center text-xs leading-5 text-white/60"
         >
           {message}
         </p>

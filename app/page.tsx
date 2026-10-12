@@ -15,7 +15,6 @@ import Skeleton from "@mui/material/Skeleton";
 import TextField from "@mui/material/TextField";
 import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import SocialFooter from "./SocialFooter";
-import PaymentWhatsApp from "./PaymentWhatsApp";
 import BookingTicket from "./BookingTicket";
 
 type Step =
@@ -2761,7 +2760,7 @@ export default function Home() {
                           ? "dólares"
                           : "bolívares"
                       }.`
-                    : "Tu horario ya quedó reservado. El comprobante de pago aún no se ha enviado ni verificado: compártelo con WAESTUDIO por WhatsApp usando las opciones de abajo."}
+                    : "Tu cita quedó registrada. Envía el comprobante de reserva al barbero por WhatsApp utilizando el botón de abajo."}
                 </p>
 
                 {bookingCode ? (
@@ -2772,6 +2771,12 @@ export default function Home() {
                     appointmentDate={selectedDate}
                     appointmentTime={selectedTime}
                     priceUsd={selectedService.price}
+                    customerWhatsapp={whatsapp}
+                    paymentMethod={paymentMethod}
+                    cashCurrency={cashCurrency}
+                    payerBank={bank}
+                    paymentReference={reference}
+                    bcvRate={bcvRate}
                   />
                 ) : (
                   <div className="mt-7 rounded-[22px] border border-white/10 bg-white/[0.035] p-5">
@@ -2783,34 +2788,7 @@ export default function Home() {
                   </div>
                 )}
 
-                <div className="mt-5 flex items-start justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-xs">
-                  <span className="text-white/40">
-                    Estado del pago
-                  </span>
-                  <span className="max-w-[65%] text-right text-[#c5a66d]">
-                    {paymentMethod === "cash"
-                      ? "Efectivo pendiente de cobrar en el local"
-                      : "Comprobante pendiente de verificación"}
-                  </span>
-                </div>
 
-                {(paymentMethod === "mobile" ||
-                  paymentMethod === "transfer") && (
-                  <PaymentWhatsApp
-                    customerName={name}
-                    customerWhatsapp={whatsapp}
-                    bookingCode={bookingCode}
-                    serviceName={selectedService.name}
-                    appointmentDate={formatDate(selectedDate)}
-                    appointmentTime={selectedTime}
-                    amountUsd={selectedService.price}
-                    amountVes={amountVes}
-                    paymentMethod={paymentMethod}
-                    bank={bank}
-                    reference={reference}
-                    receipt={receipt}
-                  />
-                )}
               </div>
 
               <Button
