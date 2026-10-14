@@ -15,6 +15,11 @@ const BUSINESS_CLOSE_MINUTES = 18 * 60;
 const LOCK_BUCKET_MINUTES = 15;
 const LOCK_TTL_MS = 2 * 60 * 1000;
 
+// Los candados técnicos viven fuera del calendario operativo.
+// No se eliminan: se liberan con control de versión (ETag).
+const LOCK_MARKER_START = "2000-01-01T00:00:00.000Z";
+const LOCK_MARKER_END = "2000-01-01T00:01:00.000Z";
+
 const MAX_REQUEST_BYTES = 4_000_000;
 const MAX_FORM_FIELDS = 16;
 const MAX_TEXT_BYTES = 2_000;
@@ -65,6 +70,7 @@ type CalendarLock = {
   eventId: string;
   startsAt: Date;
   endsAt: Date;
+  ownerToken: string;
 };
 
 function getText(
@@ -187,7 +193,7 @@ function createLockEventId(
 ): string {
   return createHash("sha256")
     .update(
-      `waestudio-lock-${bucketStart.toISOString()}`
+      `waestudio-lock-v2-${bucketStart.toISOString()}`
     )
     .digest("hex")
     .slice(0, 40);
@@ -226,31 +232,29 @@ function getGoogleHttpStatus(
 
 function buildLockBuckets(
   startsAt: Date,
-  endsAt: Date
+  endsAt: Date,
+  ownerToken: string
 ): CalendarLock[] {
   const bucketMs =
     LOCK_BUCKET_MINUTES * 60 * 1000;
 
   const locks: CalendarLock[] = [];
+  const firstBucket =
+    Math.floor(startsAt.getTime() / bucketMs) *
+    bucketMs;
 
   for (
-    let cursor = startsAt.getTime();
+    let cursor = firstBucket;
     cursor < endsAt.getTime();
     cursor += bucketMs
   ) {
     const bucketStart = new Date(cursor);
 
-    const bucketEnd = new Date(
-      Math.min(
-        cursor + bucketMs,
-        endsAt.getTime()
-      )
-    );
-
     locks.push({
       eventId: createLockEventId(bucketStart),
       startsAt: bucketStart,
-      endsAt: bucketEnd,
+      endsAt: new Date(cursor + bucketMs),
+      ownerToken,
     });
   }
 
@@ -311,54 +315,59 @@ async function isGoogleCalendarBusy(
   return calendarData.busy.length > 0;
 }
 
+// Se utiliza un evento persistente por bloque horario.
+// Google Calendar no permite reutilizar de forma fiable el ID
+// de un evento eliminado; por eso estos eventos no se borran.
+function createLockEventBody(
+  lock: CalendarLock,
+  ownerToken: string,
+  expiresAt: number
+) {
+  return {
+    id: lock.eventId,
+    summary: "WAESTUDIO · Control interno de reservas",
+    description:
+      "Evento técnico de coordinación. No eliminar ni modificar.",
+    transparency: "transparent",
+    visibility: "private",
+    start: {
+      dateTime: LOCK_MARKER_START,
+      timeZone: "UTC",
+    },
+    end: {
+      dateTime: LOCK_MARKER_END,
+      timeZone: "UTC",
+    },
+    reminders: {
+      useDefault: false,
+    },
+    extendedProperties: {
+      private: {
+        waestudioLock: "v2",
+        waestudioLockOwner: ownerToken,
+        waestudioLockExpiresAt: String(expiresAt),
+        waestudioLockBucket: lock.startsAt.toISOString(),
+      },
+    },
+  };
+}
+
 async function insertLockEvent(
   lock: CalendarLock
 ): Promise<boolean> {
   const calendar = createCalendarClient();
   const calendarId = getCalendarId();
-
-  const expiresAt =
-    Date.now() + LOCK_TTL_MS;
-
-  const insert = async () => {
-    await calendar.events.insert({
-      calendarId,
-      requestBody: {
-        id: lock.eventId,
-
-        summary:
-          "WAESTUDIO · Reserva en proceso",
-
-        transparency: "transparent",
-        visibility: "private",
-
-        start: {
-          dateTime: lock.startsAt.toISOString(),
-          timeZone: GOOGLE_TIME_ZONE,
-        },
-
-        end: {
-          dateTime: lock.endsAt.toISOString(),
-          timeZone: GOOGLE_TIME_ZONE,
-        },
-
-        reminders: {
-          useDefault: false,
-        },
-
-        extendedProperties: {
-          private: {
-            waestudioLock: "true",
-            waestudioLockExpiresAt:
-              String(expiresAt),
-          },
-        },
-      },
-    });
-  };
+  const expiresAt = Date.now() + LOCK_TTL_MS;
 
   try {
-    await insert();
+    await calendar.events.insert({
+      calendarId,
+      requestBody: createLockEventBody(
+        lock,
+        lock.ownerToken,
+        expiresAt
+      ),
+    });
     return true;
   } catch (error) {
     if (getGoogleHttpStatus(error) !== 409) {
@@ -366,51 +375,69 @@ async function insertLockEvent(
     }
   }
 
-  try {
-    const existing = await calendar.events.get({
-      calendarId,
-      eventId: lock.eventId,
-    });
+  // Un marcador existente solo se puede tomar si su
+  // arrendamiento expiró o ya fue liberado. La actualización
+  // condicional evita que dos clientes adquieran el mismo lock.
+  const existing = await calendar.events.get({
+    calendarId,
+    eventId: lock.eventId,
+  });
 
-    const privateData =
-      existing.data.extendedProperties?.private;
+  const privateData =
+    existing.data.extendedProperties?.private;
 
-    const isWaestudioLock =
-      privateData?.waestudioLock === "true";
-
-    const existingExpiresAt = Number(
-      privateData?.waestudioLockExpiresAt
+  if (
+    privateData?.waestudioLock !== "v2" ||
+    privateData.waestudioLockBucket !==
+      lock.startsAt.toISOString()
+  ) {
+    throw new Error(
+      "El candado de calendario no pertenece a WAESTUDIO."
     );
+  }
 
-    const isExpired =
-      isWaestudioLock &&
-      Number.isFinite(existingExpiresAt) &&
-      existingExpiresAt < Date.now();
+  const existingExpiresAt = Number(
+    privateData.waestudioLockExpiresAt
+  );
 
-    if (!isExpired) {
-      return false;
-    }
+  if (
+    !Number.isFinite(existingExpiresAt) ||
+    existingExpiresAt > Date.now()
+  ) {
+    return false;
+  }
 
-    await calendar.events.delete({
-      calendarId,
-      eventId: lock.eventId,
-    });
+  const etag = existing.data.etag;
 
-    try {
-      await insert();
-      return true;
-    } catch (retryError) {
-      if (
-        getGoogleHttpStatus(retryError) ===
-        409
-      ) {
-        return false;
+  if (!etag) {
+    throw new Error(
+      "Google Calendar no devolvió la versión del candado."
+    );
+  }
+
+  try {
+    await calendar.events.update(
+      {
+        calendarId,
+        eventId: lock.eventId,
+        requestBody: createLockEventBody(
+          lock,
+          lock.ownerToken,
+          expiresAt
+        ),
+      },
+      {
+        headers: {
+          "If-Match": etag,
+        },
       }
-
-      throw retryError;
-    }
+    );
+    return true;
   } catch (error) {
-    if (getGoogleHttpStatus(error) === 404) {
+    if (
+      getGoogleHttpStatus(error) === 412 ||
+      getGoogleHttpStatus(error) === 409
+    ) {
       return false;
     }
 
@@ -431,17 +458,63 @@ async function releaseCalendarLocks(
   await Promise.allSettled(
     locks.map(async (lock) => {
       try {
-        await calendar.events.delete({
+        const current = await calendar.events.get({
           calendarId,
           eventId: lock.eventId,
         });
-      } catch (error) {
-        if (getGoogleHttpStatus(error) !== 404) {
-          console.error(
-            "No se pudo eliminar un lock temporal de Calendar:",
-            error
+
+        const privateData =
+          current.data.extendedProperties?.private;
+
+        // Nunca liberar un candado que otro cliente
+        // adquirió después de que venciera nuestro TTL.
+        if (
+          privateData?.waestudioLock !== "v2" ||
+          privateData.waestudioLockOwner !==
+            lock.ownerToken
+        ) {
+          return;
+        }
+
+        const etag = current.data.etag;
+
+        if (!etag) {
+          throw new Error(
+            "No se pudo verificar la versión del candado."
           );
         }
+
+        await calendar.events.update(
+          {
+            calendarId,
+            eventId: lock.eventId,
+            requestBody: createLockEventBody(
+              lock,
+              "released",
+              0
+            ),
+          },
+          {
+            headers: {
+              "If-Match": etag,
+            },
+          }
+        );
+      } catch (error) {
+        const status = getGoogleHttpStatus(error);
+
+        if (
+          status === 404 ||
+          status === 410 ||
+          status === 412
+        ) {
+          return;
+        }
+
+        console.error(
+          "No se pudo liberar un candado temporal de Calendar:",
+          error
+        );
       }
     })
   );
@@ -451,22 +524,21 @@ async function acquireCalendarLocks(
   startsAt: Date,
   endsAt: Date
 ) {
+  const ownerToken = randomBytes(16).toString("hex");
   const requiredLocks = buildLockBuckets(
     startsAt,
-    endsAt
+    endsAt,
+    ownerToken
   );
 
   const acquiredLocks: CalendarLock[] = [];
 
   try {
     for (const lock of requiredLocks) {
-      const acquired =
-        await insertLockEvent(lock);
+      const acquired = await insertLockEvent(lock);
 
       if (!acquired) {
-        await releaseCalendarLocks(
-          acquiredLocks
-        );
+        await releaseCalendarLocks(acquiredLocks);
 
         return {
           ok: false as const,
